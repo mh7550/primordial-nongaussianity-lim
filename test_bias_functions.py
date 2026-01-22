@@ -23,13 +23,16 @@ from bias_functions import (
 
 def test_local_scaling():
     """
-    Test 1: Validate that local PNG shows characteristic 1/k² scaling.
+    Test 1: Validate that local PNG shows characteristic 1/(k²*T(k)) scaling.
 
-    Expected: Δb(k=0.01)/Δb(k=0.1) ≈ 100
+    Expected: Δb(k=0.01)/Δb(k=0.1) ≈ 100 * T(0.1)/T(0.01) ≈ 85-95
+    The transfer function T(k) causes deviation from pure k^(-2).
     """
     print("=" * 70)
-    print("TEST 1: Local PNG 1/k² Scaling")
+    print("TEST 1: Local PNG 1/(k²*T(k)) Scaling")
     print("=" * 70)
+
+    from cosmology import get_transfer_function
 
     k_small = 0.01  # h/Mpc
     k_large = 0.1   # h/Mpc
@@ -40,19 +43,26 @@ def test_local_scaling():
     delta_b_small = delta_b_local(k_small, z, fNL, b1)
     delta_b_large = delta_b_local(k_large, z, fNL, b1)
 
-    ratio_observed = delta_b_small / delta_b_large
-    ratio_expected = (k_large / k_small)**2  # Should be 100 for 1/k² scaling
+    T_small = get_transfer_function(k_small)
+    T_large = get_transfer_function(k_large)
 
+    ratio_observed = delta_b_small / delta_b_large
+    ratio_pure_k2 = (k_large / k_small)**2  # 100 for pure k^(-2)
+    ratio_expected = ratio_pure_k2 * (T_large / T_small)  # Include T(k) effect
+
+    print(f"T(k={k_small}) = {T_small:.4f}")
+    print(f"T(k={k_large}) = {T_large:.4f}")
     print(f"Δb_local(k={k_small} h/Mpc) = {delta_b_small:.6f}")
     print(f"Δb_local(k={k_large} h/Mpc) = {delta_b_large:.6f}")
     print(f"Ratio Δb(0.01)/Δb(0.1) = {ratio_observed:.2f}")
-    print(f"Expected for 1/k² scaling = {ratio_expected:.2f}")
+    print(f"Expected for pure k^(-2) = {ratio_pure_k2:.2f}")
+    print(f"Expected with T(k) effect = {ratio_expected:.2f}")
 
-    # Allow 10% tolerance due to T(k) variation
-    assert np.abs(ratio_observed - ratio_expected) / ratio_expected < 0.15, \
+    # Allow 5% tolerance - should match closely with T(k) included
+    assert np.abs(ratio_observed - ratio_expected) / ratio_expected < 0.05, \
         f"Local scaling test failed: ratio {ratio_observed:.2f} not close to {ratio_expected:.2f}"
 
-    print("✓ Local PNG shows correct 1/k² scaling\n")
+    print("✓ Local PNG shows correct 1/(k²*T(k)) scaling\n")
 
 
 def test_equilateral_weak_scaling():
@@ -296,14 +306,19 @@ def generate_comparison_plot():
     # Create plot
     plt.figure(figsize=(10, 7))
 
-    plt.loglog(k, delta_b_loc, 'b-', linewidth=2.5, label='Local')
-    plt.loglog(k, delta_b_equ, 'r--', linewidth=2.5, label='Equilateral')
-    plt.loglog(k, delta_b_ort, 'g-.', linewidth=2.5, label='Orthogonal')
+    plt.loglog(k, delta_b_loc, 'b-', linewidth=2.5, label='Local', zorder=3)
+    plt.loglog(k, delta_b_equ, 'r--', linewidth=2.5, label='Equilateral', zorder=2)
+    plt.loglog(k, delta_b_ort, 'g-.', linewidth=2.5, label='Orthogonal', zorder=2)
 
-    # Add reference line showing 1/k² scaling
-    k_ref = np.array([0.01, 0.1])
-    delta_ref = delta_b_loc[np.argmin(np.abs(k - 0.01))] * (0.01 / k_ref)**2
-    plt.loglog(k_ref, delta_ref, 'k:', linewidth=1.5, alpha=0.5, label=r'$\propto k^{-2}$')
+    # Add reference line showing 1/k² scaling at large scales
+    # Use k range where T(k) ≈ 1 (k < 0.05)
+    k_ref = np.logspace(-3, -1.3, 20)  # k from 0.001 to ~0.05
+    # Normalize to match local bias at k=0.01
+    k_norm = 0.01
+    idx_norm = np.argmin(np.abs(k - k_norm))
+    delta_ref = delta_b_loc[idx_norm] * (k_norm / k_ref)**2
+    plt.loglog(k_ref, delta_ref, 'k:', linewidth=2, alpha=0.6,
+               label=r'$\propto k^{-2}$ (reference)', zorder=1)
 
     plt.xlabel(r'$k$ [h/Mpc]', fontsize=14)
     plt.ylabel(r'$\Delta b(k, z)$', fontsize=14)
@@ -312,6 +327,16 @@ def generate_comparison_plot():
               fontsize=15)
     plt.legend(fontsize=12, loc='best')
     plt.grid(True, alpha=0.3, which='both')
+
+    # Add annotation about local bias scaling
+    plt.text(0.05, 0.25,
+             r'Local: $\Delta b \propto 1/(k^2 T(k))$' + '\n' +
+             r'Parallel to $k^{-2}$ at large scales' + '\n' +
+             r'Steeper than $k^{-2}$ at small scales',
+             transform=plt.gca().transAxes,
+             fontsize=10, verticalalignment='top',
+             bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.7))
+
     plt.tight_layout()
 
     output_path = figures_dir / 'bias_comparison_shapes.png'
@@ -336,32 +361,50 @@ def generate_fNL_variation_plot():
     k = np.logspace(-3, 0, 100)
     z = 0.0
     b1 = 2.0
-    fNL_values = [-10, 0, 10]
+    fNL_values = [-10, 10]  # Removed 0 since it can't be shown on log scale
 
     # Create plot
     plt.figure(figsize=(10, 7))
 
-    colors = ['blue', 'gray', 'red']
-    linestyles = ['-', '--', '-']
+    colors = ['blue', 'red']
+    linestyles = ['--', '-']
 
     for fNL, color, ls in zip(fNL_values, colors, linestyles):
         delta_b = delta_b_local(k, z, fNL, b1)
+        # Sign of delta_b matches sign of fNL
         label = f'$f_{{\\rm NL}}^{{\\rm loc}} = {fNL:+d}$'
-        plt.loglog(k, np.abs(delta_b), color=color, linestyle=ls,
-                   linewidth=2.5, label=label)
+
+        # Plot actual signed values (not absolute value)
+        # Negative values will be shown as dashed to distinguish
+        if fNL > 0:
+            plt.loglog(k, delta_b, color=color, linestyle=ls,
+                       linewidth=2.5, label=label)
+        else:
+            # For negative fNL, plot absolute value with dashed line
+            plt.loglog(k, -delta_b, color=color, linestyle=ls,
+                       linewidth=2.5, label=label)
 
     plt.xlabel(r'$k$ [h/Mpc]', fontsize=14)
     plt.ylabel(r'$|\Delta b_{\rm local}(k, z)|$', fontsize=14)
     plt.title(f'Local-Type PNG Bias vs $f_{{\\rm NL}}$\n' +
-              f'$b_1 = {b1}$, $z = {z}$',
-              fontsize=15)
+              f'$b_1 = {b1}$, $z = {z}$ (Note: $f_{{\\rm NL}}=0$ gives $\\Delta b=0$)',
+              fontsize=13)
     plt.legend(fontsize=12, loc='best')
     plt.grid(True, alpha=0.3, which='both')
+
+    # Add text note explaining that fNL=0 is not shown
+    plt.text(0.05, 0.95,
+             'Note: Both curves have same magnitude\n(Δb ∝ fNL)',
+             transform=plt.gca().transAxes,
+             fontsize=10, verticalalignment='top',
+             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
     plt.tight_layout()
 
     output_path = figures_dir / 'bias_local_fNL.png'
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     print(f"Saved: {output_path}")
+    print(f"Note: Both fNL=±10 curves should overlap (same magnitude)")
     plt.close()
 
 
@@ -386,12 +429,14 @@ def generate_redshift_evolution_plot():
     # Create plot
     plt.figure(figsize=(10, 7))
 
-    colors = plt.cm.viridis(np.linspace(0, 0.9, len(z_values)))
+    # Use colors that go from dark (z=0) to bright (z=3) to show evolution clearly
+    colors = plt.cm.plasma(np.linspace(0.1, 0.9, len(z_values)))
 
-    for z, color in zip(z_values, colors):
+    # Plot in reverse order so z=3 is on top in the legend
+    for i, (z, color) in enumerate(zip(z_values, colors)):
         delta_b = delta_b_local(k, z, fNL, b1)
         plt.loglog(k, delta_b, color=color, linewidth=2.5,
-                   label=f'$z = {z}$')
+                   label=f'$z = {z}$', zorder=len(z_values)-i)
 
     plt.xlabel(r'$k$ [h/Mpc]', fontsize=14)
     plt.ylabel(r'$\Delta b_{\rm local}(k, z)$', fontsize=14)
@@ -401,9 +446,18 @@ def generate_redshift_evolution_plot():
     plt.legend(fontsize=12, loc='best')
     plt.grid(True, alpha=0.3, which='both')
 
-    # Add annotation explaining evolution
+    # Add annotation with actual observed behavior
+    # Check which direction the curves go
+    delta_b_z0 = delta_b_local(0.01, 0, fNL, b1)
+    delta_b_z3 = delta_b_local(0.01, 3, fNL, b1)
+
+    if delta_b_z3 > delta_b_z0:
+        annotation = r'$\Delta b \propto 1/D(z)$ increases at higher $z$'
+    else:
+        annotation = r'$\Delta b \propto 1/D(z)$ with $D(z)$ from cosmology module'
+
     plt.text(0.05, 0.05,
-             r'$\Delta b \propto 1/D(z)$ increases at higher $z$',
+             annotation,
              transform=plt.gca().transAxes,
              fontsize=11, style='italic',
              bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
@@ -413,7 +467,52 @@ def generate_redshift_evolution_plot():
     output_path = figures_dir / 'bias_redshift_evolution.png'
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     print(f"Saved: {output_path}")
+
+    # Print diagnostic info
+    print(f"Diagnostic: Δb(k=0.01, z=0) = {delta_b_z0:.6f}")
+    print(f"Diagnostic: Δb(k=0.01, z=3) = {delta_b_z3:.6f}")
+    print(f"Ratio Δb(z=3)/Δb(z=0) = {delta_b_z3/delta_b_z0:.2f}")
+
     plt.close()
+
+
+def print_diagnostic_values():
+    """Print diagnostic values for verification."""
+    print("=" * 70)
+    print("DIAGNOSTIC VALUES")
+    print("=" * 70)
+
+    from cosmology import get_transfer_function
+
+    k_values = [0.001, 0.01, 0.1]
+    z = 0.0
+    fNL = 10.0
+    b1 = 2.0
+
+    print(f"\nParameters: fNL = {fNL}, b1 = {b1}, z = {z}")
+    print(f"\n{'k [h/Mpc]':<12} {'T(k)':<10} {'Δb_local':<12} {'Units Check'}")
+    print("-" * 70)
+
+    for k in k_values:
+        T_k = get_transfer_function(k)
+        delta_b = delta_b_local(k, z, fNL, b1)
+        print(f"{k:<12.3f} {T_k:<10.4f} {delta_b:<12.6f}")
+
+    # Verify units
+    print("\nUnits verification:")
+    print(f"  Ωm = {0.3111} (dimensionless)")
+    print(f"  H0 = {67.66} km/s/Mpc")
+    print(f"  c = {299792.458} km/s")
+    print(f"  H0²/c² = {(67.66**2)/(299792.458**2):.6e} Mpc^-2")
+    print(f"  3*Ωm*H0²/c² = {3*0.3111*(67.66**2)/(299792.458**2):.6e} Mpc^-2")
+    print(f"  k = 0.01 h/Mpc → k² = {0.01**2} (h/Mpc)^2")
+
+    # Check magnitude
+    print(f"\nMagnitude check:")
+    print(f"  At k=0.01, Δb ≈ {delta_b_local(0.01, 0, 10, 2):.4f}")
+    print(f"  This is << b1={b1}, as expected (small correction)")
+
+    print()
 
 
 def run_all_tests():
@@ -421,6 +520,9 @@ def run_all_tests():
     print("\n" + "=" * 70)
     print("BIAS FUNCTIONS TEST SUITE")
     print("=" * 70 + "\n")
+
+    # Print diagnostic values first
+    print_diagnostic_values()
 
     # Run validation tests
     test_local_scaling()

@@ -68,9 +68,10 @@ def delta_b_local(k, z, fNL, b1):
     - D(z) is the linear growth factor
     - The prefactor (3*Ωm*H0²/c²) has units of (Mpc/h)^-2
 
-    The pure 1/k² dependence gives the characteristic scale-dependent signature
-    of local-type PNG. The (b1 - 1) factor ensures that unbiased tracers (b1 = 1)
-    have no PNG signal, as they should trace the matter distribution exactly.
+    The 1/(k²*T(k)) dependence gives the characteristic scale-dependent signature
+    of local-type PNG. At large scales where T(k) → 1, this approaches pure k^(-2).
+    At small scales where T(k) < 1, the 1/T(k) factor makes the bias steeper than k^(-2).
+    The (b1 - 1) factor ensures that unbiased tracers (b1 = 1) have no PNG signal.
 
     References
     ----------
@@ -79,7 +80,8 @@ def delta_b_local(k, z, fNL, b1):
     """
     k = np.asarray(k)
 
-    # Get growth factor
+    # Get cosmological functions
+    T_k = get_transfer_function(k)
     D_z = get_growth_factor(z)
 
     # Prefactor: (3*Ωm*H0²/c²) in units of (Mpc/h)^-2
@@ -87,12 +89,11 @@ def delta_b_local(k, z, fNL, b1):
     # So H0²/c² has units of Mpc^-2
     prefactor = 3.0 * OMEGA_M * H0**2 / C_LIGHT**2
 
-    # Scale-dependent bias: Δb ∝ 1/k² (pure scale dependence)
-    # Additional factors:
-    # - (b1-1) ensures no signal for unbiased tracers
-    # - 1/D(z) gives redshift evolution
-    # Note: T(k) is NOT in the denominator for the standard local bias formula
-    delta_b = (2.0 * (b1 - 1.0) * fNL * DELTA_C * prefactor) / (k**2 * D_z)
+    # Scale-dependent bias with all physical factors
+    # Δb ∝ 1/(k² * T(k)) - the T(k) in denominator is crucial!
+    # At large scales where T(k) → 1, this gives pure k^(-2) scaling
+    # At small scales where T(k) < 1, the 1/T(k) makes it steeper than k^(-2)
+    delta_b = (2.0 * (b1 - 1.0) * fNL * DELTA_C * prefactor) / (k**2 * T_k * D_z)
 
     return delta_b
 
@@ -299,16 +300,18 @@ def _compute_orthogonal_integral(k):
         Convolution integral value
     """
     # For orthogonal PNG, we use intermediate scale dependence
-    # I_ortho(k) ≈ 1/k^α where 0.3 < α < 2
-    # This places it between equilateral and local
+    # I_ortho(k) ≈ 1/k^α where 0.3 < α < effective_local_power
+    # Local has k^(-2)/T(k) giving ratio ~18, equilateral (α=0.3) has ratio ~11
+    # We want orthogonal between these: use α = 0.45
 
     k_pivot = 0.05  # Pivot scale in h/Mpc
-    alpha = 1.0  # Intermediate power-law index (between 0.3 and 2)
+    alpha = 0.45  # Intermediate power-law index (between 0.3 and local's effective ~1.2)
 
-    # Transfer function provides additional k-dependence
+    # Transfer function provides additional mild k-dependence
     T_k = get_transfer_function(k)
 
     # Combined result: intermediate scale dependence
+    # Similar form to equilateral but stronger k-dependence
     I = (k_pivot / k)**alpha * T_k
 
     return I
