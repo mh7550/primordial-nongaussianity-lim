@@ -135,11 +135,15 @@ def get_growth_factor(z):
 
 def get_power_spectrum(k, z, fNL=0.0):
     """
-    Compute the matter power spectrum P(k, z) with primordial non-Gaussianity.
+    Compute the linear matter power spectrum P_matter(k, z).
 
-    The power spectrum describes the amplitude of density fluctuations as a
-    function of scale k and redshift z. This function includes corrections
-    from local-type primordial non-Gaussianity parametrized by fNL.
+    The matter power spectrum describes the amplitude of matter density
+    fluctuations as a function of scale k and redshift z.
+
+    **IMPORTANT**: The matter power spectrum itself is NOT affected by
+    primordial non-Gaussianity (fNL). PNG affects the bispectrum and the
+    scale-dependent bias of tracers. For observed power spectra of
+    biased tracers (galaxies, halos), use the bias_functions module.
 
     Parameters
     ----------
@@ -148,8 +152,8 @@ def get_power_spectrum(k, z, fNL=0.0):
     z : float
         Redshift
     fNL : float, optional
-        Local-type primordial non-Gaussianity parameter (default: 0.0)
-        fNL = 0 corresponds to Gaussian initial conditions
+        **DEPRECATED** - This parameter is ignored. The matter power spectrum
+        is not affected by fNL. Use bias_functions module for PNG effects.
 
     Returns
     -------
@@ -158,23 +162,26 @@ def get_power_spectrum(k, z, fNL=0.0):
 
     Notes
     -----
-    The power spectrum with primordial non-Gaussianity is given by:
+    The linear matter power spectrum is:
 
-    P(k, z) = P_Gaussian(k, z) * [1 + ΔP_fNL(k, z)]
+    P_matter(k, z) = (2π²/k³) * A_s * (k/k_pivot)^(n_s-1) * T²(k) * D²(z)
 
-    where P_Gaussian(k, z) = (2π²/k³) * As * (k/k_pivot)^(ns-1) * T²(k) * D²(z)
+    where:
+    - A_s = 2.1e-9 is the primordial power spectrum amplitude (Planck 2018)
+    - n_s = 0.9649 is the spectral index
+    - T(k) is the matter transfer function
+    - D(z) is the linear growth factor, normalized to D(z=0) = 1
+    - k_pivot = 0.05/h Mpc^-1 is the pivot scale
 
-    and the fNL correction is:
-
-    ΔP_fNL(k, z) = 2 * fNL * δc * M(k, z) * T(k) * D(z) / (k² * T(k_pivot) * D(z=0))
-
-    where δc = 1.686 is the critical density for collapse, M(k,z) is the
-    scale-dependent bias correction, and k_pivot = 0.05 Mpc^-1.
+    For biased tracers with PNG:
+        from bias_functions import get_total_bias
+        b_total = get_total_bias(k, z, fNL, b1, shape='local')
+        P_obs = b_total**2 * get_power_spectrum(k, z)
 
     References
     ----------
-    Dalal et al., PRD 77, 123514 (2008)
-    Desjacques et al., Phys. Rept. 733, 1 (2018)
+    Eisenstein & Hu, ApJ 496, 605 (1998) - Transfer function
+    Carroll, Press, & Turner, ARA&A 30, 499 (1992) - Growth factor
     """
     k = np.asarray(k)
 
@@ -197,39 +204,30 @@ def get_power_spectrum(k, z, fNL=0.0):
     # Normalize to sigma8 at z=0 if needed
     # For now, we use the direct calculation with Planck18 As
 
-    if fNL == 0.0:
-        return P_linear
+    # NOTE: The matter power spectrum P_m(k) is NOT directly affected by fNL!
+    # Primordial non-Gaussianity affects:
+    #   1. The matter bispectrum B(k1, k2, k3)
+    #   2. The scale-dependent bias of halos/galaxies: b(k) = b1 + Δb(k, fNL)
+    #
+    # For biased tracers, the observed power spectrum is:
+    #   P_obs(k) = b²(k) * P_matter(k)
+    # where the fNL dependence enters through b(k).
+    #
+    # The fNL parameter is kept for backwards compatibility but is ignored.
+    # Use the bias_functions module to get scale-dependent bias corrections.
 
-    # Apply fNL correction for primordial non-Gaussianity
-    # The correction is scale-dependent and becomes important at large scales
-    # ΔP/P ~ 2 * fNL * δc * (Ωm * H0²) / (k² * T(k) * c²)
+    if fNL != 0.0:
+        import warnings
+        warnings.warn(
+            "fNL parameter in get_power_spectrum() is deprecated and ignored. "
+            "The matter power spectrum is not directly affected by primordial non-Gaussianity. "
+            "For biased tracers, use the bias_functions module to compute "
+            "P_obs(k) = (b1 + delta_b(k, fNL))² * P_matter(k).",
+            DeprecationWarning,
+            stacklevel=2
+        )
 
-    # Critical density for spherical collapse
-    delta_c = 1.686
-
-    # Scale-dependent correction (simplified form)
-    # Full form requires transfer function at present day
-    c_km_s = 299792.458  # Speed of light in km/s
-
-    # Scale-dependent bias correction from fNL
-    # This is a simplified version; full implementation would include
-    # the exact Poisson equation solution
-    T_pivot = get_transfer_function(k_pivot)
-    D_0 = 1.0  # D(z=0) = 1 by normalization
-
-    # fNL correction factor (scale-dependent)
-    # Δ(k,z) = δc * (Ωm * H0² / k² / c²) * (T(k) / T_pivot) * (D(z) / D_0)
-    prefactor = 3.0 * Om0 * H0**2 / c_km_s**2  # in (Mpc/h)^-2
-    Delta_fNL = delta_c * prefactor / k**2 * (T / T_pivot) * (D / D_0)
-
-    # Power spectrum with fNL correction
-    # P(k,z) = P_Gaussian(k,z) * [1 + 2*fNL*Δ(k,z)]^2
-    # For small fNL, this is approximately P_Gaussian * (1 + 4*fNL*Δ)
-    correction_factor = (1.0 + 2.0 * fNL * Delta_fNL)**2
-
-    P_fNL = P_linear * correction_factor
-
-    return P_fNL
+    return P_linear
 
 
 if __name__ == "__main__":

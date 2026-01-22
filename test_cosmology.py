@@ -17,8 +17,8 @@ from cosmology import (
     get_transfer_function,
     get_growth_factor,
     get_power_spectrum,
-    OMEGA_M,
-    OMEGA_LAMBDA,
+    Om0 as OMEGA_M,
+    Ode0 as OMEGA_LAMBDA,
     H0,
     h
 )
@@ -90,7 +90,9 @@ def test_power_spectrum():
 
     print("\nExpected behavior:")
     print("  - P(k) should be larger on large scales (small k)")
-    print("  - fNL ≠ 0 should modify P(k), especially on large scales")
+    print("  - P_matter(k) is INDEPENDENT of fNL (all fNL values give same P)")
+    print("  - fNL affects BIAS of tracers, not matter power spectrum")
+    print("  - For observed galaxy power: P_obs = (b1 + Δb(k,fNL))² * P_matter")
     print("  - Values should be positive and finite")
 
 
@@ -160,23 +162,62 @@ def create_power_spectrum_plot():
     # Create array of k values (log-spaced)
     k_range = np.logspace(-3, 0.5, 100)  # 0.001 to ~3 h/Mpc
 
-    # Test different fNL values
-    fNL_values = [0, 10, -10]
-    colors = ['blue', 'red', 'green']
-
-    # Plot 1: P(k) for different fNL at z=0
+    # Plot 1: P_matter(k) - independent of fNL
     plt.figure(figsize=(10, 6))
 
-    for fNL, color in zip(fNL_values, colors):
-        P_k = np.array([get_power_spectrum(k, z=0, fNL=fNL) for k in k_range])
-        label = f'$f_{{NL}}$ = {fNL}'
-        plt.loglog(k_range, P_k, color=color, linewidth=2, label=label)
+    # Matter power spectrum (Gaussian, no fNL dependence)
+    P_matter = np.array([get_power_spectrum(k, z=0, fNL=0) for k in k_range])
+    plt.loglog(k_range, P_matter, 'b-', linewidth=2.5, label='$P_{\\rm matter}(k)$ [fNL-independent]')
+
+    # Show that observed galaxy power WOULD differ with fNL (via bias)
+    # Import bias_functions to demonstrate
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+        from bias_functions import get_total_bias
+
+        # Example: observed power for biased tracers with b1=2
+        b1 = 2.0
+        fNL_values = [0, 10, -10]
+        colors = ['gray', 'red', 'blue']
+        linestyles = ['--', '-', '--']
+
+        for fNL, color, ls in zip(fNL_values, colors, linestyles):
+            b_total = np.array([get_total_bias(k, 0, fNL, b1, 'local') for k in k_range])
+            P_obs = b_total**2 * P_matter
+            label = f'$P_{{\\rm obs}}$ ($f_{{\\rm NL}}^{{\\rm loc}}={fNL:+d}$, $b_1={b1}$)'
+            plt.loglog(k_range, P_obs, color=color, linestyle=ls, linewidth=1.5,
+                       alpha=0.7, label=label)
+
+        annotation = (
+            'Note: Matter power spectrum $P_{\\rm matter}(k)$ is\n'
+            'independent of $f_{\\rm NL}$ (solid blue line).\n\n'
+            'Observed galaxy power $P_{\\rm obs}(k)$ depends\n'
+            'on $f_{\\rm NL}$ through scale-dependent bias:\n'
+            '$P_{\\rm obs} = [b_1 + \\Delta b(k, f_{\\rm NL})]^2 P_{\\rm matter}$'
+        )
+
+    except ImportError:
+        # If bias_functions not available, just show matter spectrum
+        annotation = (
+            'Note: The matter power spectrum is\n'
+            'INDEPENDENT of $f_{\\rm NL}$.\n\n'
+            'Primordial non-Gaussianity affects the\n'
+            'bispectrum and scale-dependent bias,\n'
+            'not the matter power spectrum.'
+        )
 
     plt.xlabel(r'$k$ [$h$/Mpc]', fontsize=14)
     plt.ylabel(r'$P(k)$ [(Mpc/$h$)$^3$]', fontsize=14)
-    plt.title('Matter Power Spectrum at z=0', fontsize=16)
+    plt.title('Matter Power Spectrum (fNL-independent)', fontsize=16)
     plt.grid(True, alpha=0.3, which='both')
-    plt.legend(fontsize=12)
+    plt.legend(fontsize=10, loc='lower left')
+
+    # Add annotation
+    plt.text(0.98, 0.97, annotation,
+             transform=plt.gca().transAxes,
+             fontsize=9, verticalalignment='top', horizontalalignment='right',
+             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+
     plt.tight_layout()
 
     output_path = 'figures/power_spectrum_fNL.png'
