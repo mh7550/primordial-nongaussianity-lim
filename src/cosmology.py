@@ -77,8 +77,8 @@ def get_growth_factor(z):
     Compute the linear growth factor D(z) normalized to D(z=0) = 1.
 
     The growth factor describes how density perturbations grow with cosmic
-    time in the linear regime. It is computed by solving the growth equation
-    for a flat ΛCDM universe.
+    time in the linear regime. It DECREASES with increasing redshift since
+    higher z corresponds to earlier cosmic times when less growth has occurred.
 
     Parameters
     ----------
@@ -89,19 +89,29 @@ def get_growth_factor(z):
     -------
     D : float or array_like
         Linear growth factor D(z), normalized to D(z=0) = 1
+        Expected behavior: D(z) decreases with z
+        - D(z=0) = 1.0 (by normalization)
+        - D(z=1) ≈ 0.56-0.60
+        - D(z=2) ≈ 0.35-0.40
+        - D(z=3) ≈ 0.25-0.30
+        - Slightly above 1/(1+z) at low z due to dark energy
 
     Notes
     -----
-    The growth factor is computed using the integral solution for a flat
-    ΛCDM cosmology:
+    Uses the analytical approximation from Carroll, Press, & Turner (1992):
 
-    D(z) ∝ H(z) ∫_z^∞ (1+z')/(H(z'))^3 dz'
+    g(a) = (5/2) Ω_m(a) / [Ω_m(a)^(4/7) - Ω_Λ(a) + (1 + Ω_m(a)/2)(1 + Ω_Λ(a)/70)]
 
-    where H(z) is the Hubble parameter.
+    where g(a) is the growth suppression factor, and:
+
+    D(a) = a · g(a) / g(a=1)
+
+    This ensures D(z=0) = 1 and D(z) decreases with increasing z.
 
     References
     ----------
-    Carroll, Press, & Turner, ARA&A 30, 499 (1992)
+    Carroll, Press, & Turner, ARA&A 30, 499 (1992) - Equation 29
+    Lahav et al., MNRAS 251, 128 (1991)
     """
     z = np.asarray(z)
     scalar_input = False
@@ -109,24 +119,34 @@ def get_growth_factor(z):
         z = z[None]
         scalar_input = True
 
-    def integrand(zp):
-        """Integrand for growth factor calculation."""
-        a = 1.0 / (1.0 + zp)
-        Ez = COSMO.H(zp).value / H0
-        return (1.0 + zp) / (a * Ez)**3
-
-    # Compute growth factor for each redshift
+    # Compute growth factor using CPT approximation
     D = np.zeros_like(z, dtype=float)
+
     for i, zi in enumerate(z):
-        # Integrate from zi to large redshift (z=1000 is effectively infinity)
-        integral, _ = integrate.quad(integrand, zi, 1000.0)
-        Ez = COSMO.H(zi).value / H0
-        D[i] = Ez * integral
+        a = 1.0 / (1.0 + zi)
+
+        # Compute Ω_m(a) and Ω_Λ(a)
+        Ez_sq = (Om0 * a**(-3) + Ode0)  # For flat universe
+        Om_a = Om0 * a**(-3) / Ez_sq
+        OL_a = Ode0 / Ez_sq
+
+        # Carroll-Press-Turner growth suppression factor g(a)
+        # g(a) ∝ (5/2) Ω_m(a) / [Ω_m(a)^(4/7) - Ω_Λ(a) + (1 + Ω_m(a)/2)(1 + Ω_Λ(a)/70)]
+        numerator = 2.5 * Om_a
+        denom = Om_a**(4.0/7.0) - OL_a + (1.0 + Om_a/2.0) * (1.0 + OL_a/70.0)
+        g_a = numerator / denom
+
+        # D(a) = a · g(a), will normalize later
+        D[i] = a * g_a
 
     # Normalize to D(z=0) = 1
-    integral_0, _ = integrate.quad(integrand, 0.0, 1000.0)
-    D0 = H0 / H0 * integral_0  # H(z=0) = H0
-    D = D / D0
+    # Compute g(a=1) for z=0
+    Om_0 = Om0 / (Om0 + Ode0)
+    OL_0 = Ode0 / (Om0 + Ode0)
+    g_0 = 2.5 * Om_0 / (Om_0**(4.0/7.0) - OL_0 + (1.0 + Om_0/2.0) * (1.0 + OL_0/70.0))
+    D_0 = 1.0 * g_0  # a=1 at z=0
+
+    D = D / D_0
 
     if scalar_input:
         return D[0]
