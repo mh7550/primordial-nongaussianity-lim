@@ -19,6 +19,7 @@ from bias_functions import (
     delta_b_orthogonal,
     get_total_bias
 )
+from cosmology import get_growth_factor
 
 
 def test_local_scaling():
@@ -226,16 +227,17 @@ def test_redshift_evolution():
 
     print(f"\nRatio Δb(z=2)/Δb(z=0) = {delta_b_z2/delta_b_z0:.2f}")
 
-    # Note: The redshift evolution depends on the growth factor normalization
-    # With the cosmology module's growth factor increasing with time,
-    # Δb ∝ 1/D(z) decreases at higher z (D(z) is larger in the past in this convention)
-    # This is consistent with a growth factor that represents the cumulative growth
-    print("Expected: Δb(z=2) < Δb(z=0) due to growth factor normalization")
+    # With corrected D(z) that DECREASES with z:
+    # Δb ∝ 1/D(z) INCREASES at higher z
+    # This is the CORRECT physics: earlier times (higher z) have less growth
+    # so the PNG bias signal is amplified
+    print("Expected: Δb(z=2) > Δb(z=0) because D(z) decreases with z")
+    print(f"         D(z=0) = {get_growth_factor(0.0):.4f}, D(z=2) = {get_growth_factor(2.0):.4f}")
 
-    assert delta_b_z2 < delta_b_z0, \
-        "Bias follows 1/D(z) evolution as implemented"
+    assert delta_b_z2 > delta_b_z0, \
+        "Bias should increase with z because Δb ∝ 1/D(z) and D(z) decreases"
 
-    print("✓ Bias shows correct redshift evolution via 1/D(z) factor\n")
+    print("✓ Bias correctly increases with redshift (Δb ∝ 1/D(z))\n")
 
 
 def test_total_bias():
