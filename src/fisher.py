@@ -16,11 +16,19 @@ from scipy import linalg
 
 # Import from our modules
 try:
-    from .limber import get_angular_power_spectrum, get_cross_power_spectrum
-    from .survey_specs import get_noise_power_spectrum_simple, F_SKY
+    from .limber import (get_angular_power_spectrum, get_cross_power_spectrum,
+                         compute_dCl_dfNL_cross, compute_dCl_dfNL_auto,
+                         get_comoving_distance, get_hubble)
+    from .survey_specs import (get_noise_power_spectrum_simple, F_SKY,
+                               get_bias, get_number_density, SPHEREX_Z_BINS,
+                               N_SAMPLES, N_Z_BINS, get_shot_noise_angular)
 except ImportError:
-    from limber import get_angular_power_spectrum, get_cross_power_spectrum
-    from survey_specs import get_noise_power_spectrum_simple, F_SKY
+    from limber import (get_angular_power_spectrum, get_cross_power_spectrum,
+                        compute_dCl_dfNL_cross, compute_dCl_dfNL_auto,
+                        get_comoving_distance, get_hubble)
+    from survey_specs import (get_noise_power_spectrum_simple, F_SKY,
+                              get_bias, get_number_density, SPHEREX_Z_BINS,
+                              N_SAMPLES, N_Z_BINS, get_shot_noise_angular)
 
 
 def compute_dCl_dfNL(ell, z_min, z_max, b1, fNL_fid, shape='local', delta_fNL=0.1):
@@ -326,6 +334,196 @@ def compute_constraints_vs_ell_max(ell_max_array, z_bins, param, b1_values=None,
         print(f"ℓ_max = {ell_max:.0f}: σ({param}) = {sigma_array[i]:.2f}")
 
     return sigma_array
+
+
+def compute_multitracer_fisher(ell_array, z_bin_idx, fNL_fid=0, shape='local',
+                                f_sky=F_SKY, delta_fNL=0.1):
+    """
+    Compute multi-tracer Fisher matrix for f_NL using all 5 SPHEREx samples.
+
+    This function sums the Fisher information from all 5 galaxy samples.
+    The multi-tracer benefit comes from having multiple independent measurements
+    with different biases, which helps break degeneracies and reduce cosmic variance.
+
+    Parameters
+    ----------
+    ell_array : array_like
+        Array of multipole moments
+    z_bin_idx : int
+        Redshift bin index (0-10)
+    fNL_fid : float, optional
+        Fiducial f_NL value (default: 0)
+    shape : str, optional
+        PNG shape: 'local', 'equilateral', 'orthogonal'
+    f_sky : float, optional
+        Sky fraction
+    delta_fNL : float, optional
+        Step size for derivatives
+
+    Returns
+    -------
+    F_fNL : float
+        Fisher information on f_NL from this redshift bin
+
+    Notes
+    -----
+    Simplified multi-tracer approach:
+    - Sum Fisher matrices from all 5 samples (auto-spectra)
+    - Each sample has different bias and number density
+    - This captures the multi-tracer benefit of having independent measurements
+
+    Full multi-tracer (not yet implemented):
+    - Would use full 15×15 covariance matrix (5 auto + 10 cross spectra)
+    - Cross-spectra have NO shot noise → cosmic variance cancellation
+    - Requires proper covariance matrix inversion
+    """
+    # Get redshift bin edges
+    z_min, z_max = SPHEREX_Z_BINS[z_bin_idx]
+
+    # Get bias for all 5 samples
+    biases = [get_bias(s, z_bin_idx) for s in range(1, N_SAMPLES + 1)]
+
+    # Initialize total Fisher information
+    F_total = 0.0
+
+    # Sum Fisher from each sample
+    for sample_idx in range(N_SAMPLES):
+        sample_num = sample_idx + 1
+        b1 = biases[sample_idx]
+
+        # Compute Fisher for this sample using existing single-tracer function
+        # This properly handles shot noise, cosmic variance, etc.
+        F_sample = compute_fisher_element(
+            ell_array, z_min, z_max, b1, fNL_fid,
+            shape_i=shape, shape_j=shape,
+            f_sky=f_sky, survey_mode='full', delta_fNL=delta_fNL
+        )
+
+        F_total += F_sample
+
+    return F_total
+
+
+def compute_multitracer_full_forecast(ell_array, z_bin_indices=None, shape='local',
+                                      f_sky=F_SKY, delta_fNL=0.1):
+    """
+    Compute full multi-tracer forecast summing over multiple redshift bins.
+
+    Parameters
+    ----------
+    ell_array : array_like
+        Array of multipole moments
+    z_bin_indices : list of int, optional
+        List of redshift bin indices to include. If None, uses all bins (0-10).
+    shape : str, optional
+        PNG shape
+    f_sky : float, optional
+        Sky fraction
+    delta_fNL : float, optional
+        Step size for derivatives
+
+    Returns
+    -------
+    sigma_fNL : float
+        1σ constraint on f_NL
+    F_per_bin : dict
+        Fisher information from each redshift bin
+
+    Notes
+    -----
+    The total Fisher information is the sum over all redshift bins:
+    F_total = Σ_bins F_bin
+
+    This assumes bins are independent (no cross-bin correlations).
+    """
+    if z_bin_indices is None:
+        z_bin_indices = list(range(N_Z_BINS))
+
+    F_total = 0.0
+    F_per_bin = {}
+
+    print("=" * 70)
+    print(f"MULTI-TRACER FISHER FORECAST ({shape.upper()} PNG)")
+    print("=" * 70)
+    print(f"\nUsing {len(z_bin_indices)} redshift bins, {N_SAMPLES} samples per bin")
+    print(f"ℓ range: {ell_array[0]:.0f} - {ell_array[-1]:.0f}")
+    print(f"f_sky = {f_sky:.2f}")
+    print("\n" + "-" * 70)
+
+    for z_idx in z_bin_indices:
+        z_min, z_max = SPHEREX_Z_BINS[z_idx]
+
+        # Compute Fisher for this bin
+        F_bin = compute_multitracer_fisher(
+            ell_array, z_idx, fNL_fid=0, shape=shape,
+            f_sky=f_sky, delta_fNL=delta_fNL
+        )
+
+        F_total += F_bin
+        F_per_bin[z_idx] = F_bin
+
+        # Compute cumulative constraint
+        sigma_cumulative = 1.0 / np.sqrt(F_total) if F_total > 0 else np.inf
+
+        print(f"Bin {z_idx} ([{z_min:.1f}, {z_max:.1f}]): "
+              f"F = {F_bin:.3e}, σ_cumulative = {sigma_cumulative:.2f}")
+
+    print("-" * 70)
+
+    # Final constraint
+    if F_total > 0:
+        sigma_fNL = 1.0 / np.sqrt(F_total)
+    else:
+        sigma_fNL = np.inf
+
+    print(f"\nFINAL MULTI-TRACER CONSTRAINT: σ(f_NL^{shape}) = {sigma_fNL:.2f}")
+    print("=" * 70)
+
+    return sigma_fNL, F_per_bin
+
+
+def compute_single_sample_forecast(ell_array, sample_num, z_bin_indices=None,
+                                    shape='local', f_sky=F_SKY):
+    """
+    Compute forecast using a SINGLE sample (for comparison with multi-tracer).
+
+    This uses only auto-power spectra from one sample, with shot noise.
+
+    Parameters
+    ----------
+    ell_array : array_like
+        Array of multipole moments
+    sample_num : int
+        Sample number (1-5)
+    z_bin_indices : list of int, optional
+        Redshift bin indices
+    shape : str, optional
+        PNG shape
+    f_sky : float, optional
+        Sky fraction
+
+    Returns
+    -------
+    sigma_fNL : float
+        1σ constraint on f_NL
+    """
+    if z_bin_indices is None:
+        z_bin_indices = list(range(N_Z_BINS))
+
+    # Build z_bins and b1_values for single-tracer function
+    z_bins = [SPHEREX_Z_BINS[i] for i in z_bin_indices]
+    b1_values = [get_bias(sample_num, i) for i in z_bin_indices]
+
+    # Use existing single-tracer function
+    F, param_names = compute_fisher_matrix(
+        ell_array, z_bins, [f'fNL_{shape}'],
+        b1_values=b1_values, f_sky=f_sky, survey_mode='full'
+    )
+
+    constraints = get_constraints(F, param_names)
+    sigma_fNL = constraints[f'fNL_{shape}']
+
+    return sigma_fNL
 
 
 if __name__ == "__main__":
