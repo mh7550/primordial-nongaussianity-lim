@@ -262,13 +262,14 @@ def get_cross_power_spectrum(ell, z_min, z_max, b1_A, b1_B,
 
     Notes
     -----
-    For cross-correlation:
+    For cross-correlation between two galaxy samples:
 
-    C_ℓ^AB = ∫ dz [W_A(z) W_B(z)] / [χ²(z) H(z)] × P_A(k,z) P_B(k,z) / P_matter
-           = ∫ dz [W_A W_B / χ² H] × b_A(k) b_B(k) × P_matter(k,z)
+    C_ℓ^AB = ∫ dz [W_A(z) W_B(z)] / [χ²(z) H(z)] × b_A(k,z) × b_B(k,z) × P_matter(k,z)
 
-    For intensity mapping of different lines, this is crucial for
-    reducing cosmic variance.
+    where b_A(k,z) = b₁^A + Δb^A(k,z,fNL) and b_B(k,z) = b₁^B + Δb^B(k,z,fNL)
+
+    For multi-tracer analysis, cross-spectra have NO shot noise (only auto-spectra do).
+    This enables cosmic variance cancellation!
     """
     ell = np.asarray(ell)
     scalar_input = ell.ndim == 0
@@ -311,6 +312,90 @@ def get_cross_power_spectrum(ell, z_min, z_max, b1_A, b1_B,
     if scalar_input:
         return C_ell_AB[0]
     return C_ell_AB
+
+
+def compute_dCl_dfNL_cross(ell, z_min, z_max, b1_A, b1_B,
+                           fNL_fid=0, shape='local', delta_fNL=0.1):
+    """
+    Compute derivative ∂C_ℓ^AB/∂f_NL for cross-power spectrum using finite differences.
+
+    Parameters
+    ----------
+    ell : float or array_like
+        Multipole moment(s)
+    z_min : float
+        Minimum redshift
+    z_max : float
+        Maximum redshift
+    b1_A : float
+        Linear bias of tracer A
+    b1_B : float
+        Linear bias of tracer B
+    fNL_fid : float, optional
+        Fiducial fNL value (default: 0)
+    shape : str, optional
+        PNG shape
+    delta_fNL : float, optional
+        Step size for finite difference (default: 0.1)
+
+    Returns
+    -------
+    dCl_dfNL : float or array_like
+        Derivative ∂C_ℓ^AB/∂f_NL
+
+    Notes
+    -----
+    Uses centered finite difference:
+    ∂C_ℓ/∂f_NL ≈ [C_ℓ(f_NL + δf) - C_ℓ(f_NL - δf)] / (2δf)
+
+    For cross-spectra with PNG:
+    P_AB(k,z,f_NL) = [b₁^A + Δb^A(k,z,f_NL)] × [b₁^B + Δb^B(k,z,f_NL)] × P_matter(k,z)
+
+    At fiducial f_NL = 0:
+    ∂P_AB/∂f_NL|_{f_NL=0} = [∂Δb^A/∂f_NL × b₁^B + b₁^A × ∂Δb^B/∂f_NL] × P_matter
+    """
+    C_plus = get_cross_power_spectrum(ell, z_min, z_max, b1_A, b1_B,
+                                       fNL=fNL_fid + delta_fNL, shape=shape)
+    C_minus = get_cross_power_spectrum(ell, z_min, z_max, b1_A, b1_B,
+                                        fNL=fNL_fid - delta_fNL, shape=shape)
+
+    dCl_dfNL = (C_plus - C_minus) / (2.0 * delta_fNL)
+
+    return dCl_dfNL
+
+
+def compute_dCl_dfNL_auto(ell, z_min, z_max, b1,
+                          fNL_fid=0, shape='local', delta_fNL=0.1):
+    """
+    Compute derivative ∂C_ℓ/∂f_NL for auto-power spectrum.
+
+    This is a convenience wrapper around compute_dCl_dfNL_cross for the
+    case where both tracers are the same.
+
+    Parameters
+    ----------
+    ell : float or array_like
+        Multipole moment(s)
+    z_min : float
+        Minimum redshift
+    z_max : float
+        Maximum redshift
+    b1 : float
+        Linear bias
+    fNL_fid : float, optional
+        Fiducial fNL value
+    shape : str, optional
+        PNG shape
+    delta_fNL : float, optional
+        Step size for finite difference
+
+    Returns
+    -------
+    dCl_dfNL : float or array_like
+        Derivative ∂C_ℓ/∂f_NL
+    """
+    return compute_dCl_dfNL_cross(ell, z_min, z_max, b1, b1,
+                                  fNL_fid=fNL_fid, shape=shape, delta_fNL=delta_fNL)
 
 
 if __name__ == "__main__":
