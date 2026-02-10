@@ -356,13 +356,16 @@ def generate_sample_contributions_plot():
         biases.append(b1)
         n_gals.append(n_gal)
 
-        # Compute Fisher from this sample's auto-spectrum
-        # (This is a simplified calculation - just for visualization)
+        # Compute Fisher from this sample's auto-spectrum with galaxy shot noise
         from src.fisher import compute_fisher_matrix
+        from src.limber import get_comoving_distance as _get_chi
+        z_mid = (z_min + z_max) / 2.0
+        chi = _get_chi(z_mid)
+        N_ell = get_shot_noise_angular(sample, z_bin_idx, z_mid, chi)
         z_bins = [SPHEREX_Z_BINS[z_bin_idx]]
         F, _ = compute_fisher_matrix(
             ell_array, z_bins, ['fNL_local'],
-            b1_values=[b1], f_sky=0.75, survey_mode='full'
+            b1_values=[b1], f_sky=0.75, N_ell_values=[N_ell]
         )
         F_auto[sample - 1] = F[0, 0]
 

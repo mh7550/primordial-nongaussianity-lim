@@ -164,7 +164,7 @@ def compute_fisher_element(ell, z_min, z_max, b1, fNL_fid,
 
 def compute_fisher_matrix(ell_array, z_bins, params, b1_values=None,
                          fNL_fid=0.0, f_sky=F_SKY, survey_mode='full',
-                         delta_fNL=0.1):
+                         delta_fNL=0.1, N_ell_values=None):
     """
     Compute full Fisher matrix for multiple parameters and redshift bins.
 
@@ -183,9 +183,12 @@ def compute_fisher_matrix(ell_array, z_bins, params, b1_values=None,
     f_sky : float, optional
         Sky fraction
     survey_mode : str, optional
-        'full' or 'deep'
+        'full' or 'deep' (only used if N_ell_values is None)
     delta_fNL : float, optional
         Step size for derivatives
+    N_ell_values : list of float, optional
+        Galaxy shot noise N_ℓ for each redshift bin. If provided, overrides the
+        default intensity-mapping noise calculation in compute_fisher_element.
 
     Returns
     -------
@@ -222,6 +225,7 @@ def compute_fisher_matrix(ell_array, z_bins, params, b1_values=None,
     # Sum over redshift bins
     for bin_idx, (z_min, z_max) in enumerate(z_bins):
         b1 = b1_values[bin_idx]
+        N_ell_bin = N_ell_values[bin_idx] if N_ell_values is not None else None
 
         print(f"Computing Fisher for z bin [{z_min:.2f}, {z_max:.2f}], b1={b1:.2f}...")
 
@@ -235,7 +239,8 @@ def compute_fisher_matrix(ell_array, z_bins, params, b1_values=None,
 
                     F_ij = compute_fisher_element(
                         ell_array, z_min, z_max, b1, fNL_fid,
-                        shape_i, shape_j, f_sky, survey_mode, delta_fNL
+                        shape_i, shape_j, f_sky, survey_mode, delta_fNL,
+                        N_ell_override=N_ell_bin
                     )
 
                     F[i, j] += F_ij
@@ -243,6 +248,7 @@ def compute_fisher_matrix(ell_array, z_bins, params, b1_values=None,
                         F[j, i] += F_ij  # Symmetry
 
         print(f"  Done. Fisher diagonal: {np.diag(F)}")
+
 
     return F, params
 
@@ -295,7 +301,8 @@ def get_constraints(fisher_matrix, param_names):
 
 
 def compute_constraints_vs_ell_max(ell_max_array, z_bins, param, b1_values=None,
-                                   ell_min=10, f_sky=F_SKY, survey_mode='full'):
+                                   ell_min=10, f_sky=F_SKY, survey_mode='full',
+                                   N_ell_values=None):
     """
     Compute how constraints improve with increasing ℓ_max.
 
@@ -316,7 +323,9 @@ def compute_constraints_vs_ell_max(ell_max_array, z_bins, param, b1_values=None,
     f_sky : float, optional
         Sky fraction
     survey_mode : str, optional
-        Survey mode
+        Survey mode (only used if N_ell_values is None)
+    N_ell_values : list of float, optional
+        Galaxy shot noise N_ℓ for each z-bin. Passed to compute_fisher_matrix.
 
     Returns
     -------
@@ -332,7 +341,7 @@ def compute_constraints_vs_ell_max(ell_max_array, z_bins, param, b1_values=None,
         # Compute Fisher matrix
         F, param_names = compute_fisher_matrix(
             ell_array, z_bins, [param], b1_values=b1_values,
-            f_sky=f_sky, survey_mode=survey_mode
+            f_sky=f_sky, survey_mode=survey_mode, N_ell_values=N_ell_values
         )
 
         # Get constraints
