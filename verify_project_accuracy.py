@@ -322,7 +322,8 @@ def main():
         print("  • Shot noise calculations are physically reasonable")
         print("  • Bias functions have correct magnitude and scaling")
         print("  • Fisher matrix results are self-consistent")
-        print("  • Final constraint: σ(f_NL^local) = 0.13 (multi-tracer)")
+        print("  • Single-tracer: σ(f_NL^local) ~ 1.0 (matches Doré et al. 2014)")
+        print("  • Full multi-tracer (5×5 covariance): σ(f_NL^local) ~ 0.2")
     else:
         print("⚠ SOME VERIFICATIONS FAILED")
         print("\nPlease review the failed tests above.")

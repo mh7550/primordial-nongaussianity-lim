@@ -83,7 +83,7 @@ def compute_dCl_dfNL(ell, z_min, z_max, b1, fNL_fid, shape='local', delta_fNL=0.
 
 def compute_fisher_element(ell, z_min, z_max, b1, fNL_fid,
                           shape_i, shape_j, f_sky=F_SKY,
-                          survey_mode='full', delta_fNL=0.1):
+                          survey_mode='full', delta_fNL=0.1, N_ell_override=None):
     """
     Compute a single Fisher matrix element F_ij.
 
@@ -106,9 +106,12 @@ def compute_fisher_element(ell, z_min, z_max, b1, fNL_fid,
     f_sky : float, optional
         Sky fraction (default: 0.75 for SPHEREx)
     survey_mode : str, optional
-        'full' or 'deep' survey mode
+        'full' or 'deep' survey mode (only used if N_ell_override is None)
     delta_fNL : float, optional
         Step size for derivatives
+    N_ell_override : float or array_like, optional
+        If provided, use this as the noise power spectrum N_ℓ (galaxy shot noise).
+        This overrides the default intensity-mapping noise calculation.
 
     Returns
     -------
@@ -124,14 +127,19 @@ def compute_fisher_element(ell, z_min, z_max, b1, fNL_fid,
     The (2ℓ + 1) factor counts the number of independent m modes at
     each ℓ, and f_sky accounts for partial sky coverage.
     """
+    ell = np.asarray(ell)
+
     # Get fiducial C_ℓ
     C_ell_fid = get_angular_power_spectrum(
         ell, z_min, z_max, b1, fNL=fNL_fid, shape='local'
     )
 
-    # Get noise N_ℓ
+    # Get noise N_ℓ — use galaxy shot noise if provided, else intensity-mapping noise
     z_mid = (z_min + z_max) / 2.0
-    N_ell = get_noise_power_spectrum_simple(ell, z_mid, survey_mode=survey_mode)
+    if N_ell_override is not None:
+        N_ell = np.full(len(ell), float(N_ell_override))
+    else:
+        N_ell = get_noise_power_spectrum_simple(ell, z_mid, survey_mode=survey_mode)
 
     # Compute derivatives
     dCl_dpi = compute_dCl_dfNL(ell, z_min, z_max, b1, fNL_fid,
@@ -341,9 +349,9 @@ def compute_multitracer_fisher(ell_array, z_bin_idx, fNL_fid=0, shape='local',
     """
     Compute multi-tracer Fisher matrix for f_NL using all 5 SPHEREx samples.
 
-    This function sums the Fisher information from all 5 galaxy samples.
-    The multi-tracer benefit comes from having multiple independent measurements
-    with different biases, which helps break degeneracies and reduce cosmic variance.
+    Uses the full N×N signal + noise covariance matrix (Seljak 2009 formalism).
+    Cross-spectra between samples have no shot noise, enabling cosmic variance
+    cancellation.
 
     Parameters
     ----------
@@ -367,39 +375,72 @@ def compute_multitracer_fisher(ell_array, z_bin_idx, fNL_fid=0, shape='local',
 
     Notes
     -----
-    Simplified multi-tracer approach:
-    - Sum Fisher matrices from all 5 samples (auto-spectra)
-    - Each sample has different bias and number density
-    - This captures the multi-tracer benefit of having independent measurements
+    Full multi-tracer Fisher (Seljak 2009, Hamaus et al. 2012):
 
-    Full multi-tracer (not yet implemented):
-    - Would use full 15×15 covariance matrix (5 auto + 10 cross spectra)
-    - Cross-spectra have NO shot noise → cosmic variance cancellation
-    - Requires proper covariance matrix inversion
+        F(f_NL) = Σ_ℓ (2ℓ+1) f_sky/2 × Tr[Σ⁻¹ dC/df_NL Σ⁻¹ dC/df_NL]
+
+    where Σ_ij(ℓ) = C_ij^signal(ℓ) + N_ij(ℓ) is the N×N total covariance,
+    C_ij^signal(ℓ) = cross-power spectrum between samples i and j (no shot noise
+    on off-diagonals), and N_ij(ℓ) = δ_ij / (n̄_i × χ² × Δχ) is diagonal shot noise.
     """
-    # Get redshift bin edges
+    ell_array = np.asarray(ell_array)
     z_min, z_max = SPHEREX_Z_BINS[z_bin_idx]
+    z_mid = (z_min + z_max) / 2.0
 
-    # Get bias for all 5 samples
-    biases = [get_bias(s, z_bin_idx) for s in range(1, N_SAMPLES + 1)]
+    # Pre-compute comoving distance for shot noise
+    chi = get_comoving_distance(z_mid)
 
-    # Initialize total Fisher information
+    N = N_SAMPLES  # 5 tracers
+
+    # Galaxy biases and shot noises for all samples
+    biases = [get_bias(s, z_bin_idx) for s in range(1, N + 1)]
+    shot_noises = [get_shot_noise_angular(s, z_bin_idx, z_mid, chi)
+                   for s in range(1, N + 1)]
+
+    # Pre-compute all unique cross-power spectra and their derivatives
+    # C_signal_all[i,j,ell_idx] and dC_dfNL_all[i,j,ell_idx]
+    n_ell = len(ell_array)
+    C_signal_all = np.zeros((N, N, n_ell))
+    dC_dfNL_all = np.zeros((N, N, n_ell))
+
+    for i in range(N):
+        for j in range(i, N):
+            C_ij = get_cross_power_spectrum(
+                ell_array, z_min, z_max, biases[i], biases[j],
+                fNL=fNL_fid, shape=shape
+            )
+            dC_ij = compute_dCl_dfNL_cross(
+                ell_array, z_min, z_max, biases[i], biases[j],
+                fNL_fid=fNL_fid, shape=shape, delta_fNL=delta_fNL
+            )
+            C_signal_all[i, j, :] = C_ij
+            C_signal_all[j, i, :] = C_ij  # symmetry
+            dC_dfNL_all[i, j, :] = dC_ij
+            dC_dfNL_all[j, i, :] = dC_ij  # symmetry
+
+    # Sum Fisher information over all ℓ modes
     F_total = 0.0
 
-    # Sum Fisher from each sample
-    for sample_idx in range(N_SAMPLES):
-        sample_num = sample_idx + 1
-        b1 = biases[sample_idx]
+    for ell_idx, ell_val in enumerate(ell_array):
+        # Build total covariance matrix Σ = C_signal + N_shot (diagonal)
+        Sigma = C_signal_all[:, :, ell_idx].copy()
+        for i in range(N):
+            Sigma[i, i] += shot_noises[i]
 
-        # Compute Fisher for this sample using existing single-tracer function
-        # This properly handles shot noise, cosmic variance, etc.
-        F_sample = compute_fisher_element(
-            ell_array, z_min, z_max, b1, fNL_fid,
-            shape_i=shape, shape_j=shape,
-            f_sky=f_sky, survey_mode='full', delta_fNL=delta_fNL
-        )
+        # Build derivative matrix dC/df_NL
+        dC = dC_dfNL_all[:, :, ell_idx]
 
-        F_total += F_sample
+        # Invert total covariance
+        try:
+            Sigma_inv = np.linalg.inv(Sigma)
+        except np.linalg.LinAlgError:
+            continue
+
+        # Fisher contribution: (2ℓ+1) f_sky/2 × Tr[Σ⁻¹ dC Σ⁻¹ dC]
+        weight = (2.0 * ell_val + 1.0) * f_sky / 2.0
+        M = Sigma_inv @ dC
+        trace = np.trace(M @ M)
+        F_total += weight * trace
 
     return F_total
 
@@ -483,11 +524,11 @@ def compute_multitracer_full_forecast(ell_array, z_bin_indices=None, shape='loca
 
 
 def compute_single_sample_forecast(ell_array, sample_num, z_bin_indices=None,
-                                    shape='local', f_sky=F_SKY):
+                                    shape='local', f_sky=F_SKY, delta_fNL=0.1):
     """
     Compute forecast using a SINGLE sample (for comparison with multi-tracer).
 
-    This uses only auto-power spectra from one sample, with shot noise.
+    Uses galaxy shot noise N_ℓ = 1/(n̄ × χ² × Δχ) for the noise term.
 
     Parameters
     ----------
@@ -501,6 +542,8 @@ def compute_single_sample_forecast(ell_array, sample_num, z_bin_indices=None,
         PNG shape
     f_sky : float, optional
         Sky fraction
+    delta_fNL : float, optional
+        Step size for derivatives
 
     Returns
     -------
@@ -510,19 +553,27 @@ def compute_single_sample_forecast(ell_array, sample_num, z_bin_indices=None,
     if z_bin_indices is None:
         z_bin_indices = list(range(N_Z_BINS))
 
-    # Build z_bins and b1_values for single-tracer function
-    z_bins = [SPHEREX_Z_BINS[i] for i in z_bin_indices]
-    b1_values = [get_bias(sample_num, i) for i in z_bin_indices]
+    ell_array = np.asarray(ell_array)
+    F_total = 0.0
 
-    # Use existing single-tracer function
-    F, param_names = compute_fisher_matrix(
-        ell_array, z_bins, [f'fNL_{shape}'],
-        b1_values=b1_values, f_sky=f_sky, survey_mode='full'
-    )
+    for z_idx in z_bin_indices:
+        z_min, z_max = SPHEREX_Z_BINS[z_idx]
+        z_mid = (z_min + z_max) / 2.0
+        chi = get_comoving_distance(z_mid)
 
-    constraints = get_constraints(F, param_names)
-    sigma_fNL = constraints[f'fNL_{shape}']
+        b1 = get_bias(sample_num, z_idx)
+        N_ell = get_shot_noise_angular(sample_num, z_idx, z_mid, chi)
 
+        # Single-tracer Fisher with correct galaxy shot noise
+        F_bin = compute_fisher_element(
+            ell_array, z_min, z_max, b1, fNL_fid=0,
+            shape_i=shape, shape_j=shape,
+            f_sky=f_sky, delta_fNL=delta_fNL,
+            N_ell_override=N_ell
+        )
+        F_total += F_bin
+
+    sigma_fNL = 1.0 / np.sqrt(F_total) if F_total > 0 else np.inf
     return sigma_fNL
 
 
