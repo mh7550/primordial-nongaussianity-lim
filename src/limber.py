@@ -1,15 +1,39 @@
 """
-Limber approximation for angular power spectra.
+limber.py — Angular power spectra via the Limber approximation.
 
-This module implements the Limber approximation to compute angular power
-spectra C_ℓ from 3D power spectra P(k). This is essential for connecting
-large-scale structure observations to primordial non-Gaussianity.
+Computes the angular galaxy power spectrum C_ℓ (and cross-spectra C_ℓ^{ij})
+for a photometric redshift bin using the extended Limber approximation.
+
+Physics
+-------
+Under the Limber approximation (valid for ℓ ≳ 10), the angular power
+spectrum for a tophat window in [z_min, z_max] is:
+
+    C_ℓ = ∫ dz  [H(z)/c]  /χ²(z)  × [b(k_L, z)]²  P_m(k_L, z)  W²(z)
+
+where:
+  - k_L  = (ℓ + 1/2) / χ(z)  is the Limber wavenumber
+  - b(k, z) = b_1 + Δb(k, z, f_NL)  is the total (scale-dependent) bias
+  - W(z)  is the tophat window function, W = 1 for z ∈ [z_min, z_max]
+  - χ(z)  is the comoving distance
+
+For the cross-spectrum between tracers A and B:
+
+    C_ℓ^{AB} = ∫ dz [H/c/χ²] b_A(k_L) b_B(k_L) P_m(k_L) W(z)
+
+Cross-spectra have no shot noise; only auto-spectra add N_ℓ = 1/(n̄ χ² Δχ).
+
+PNG signature
+-------------
+The scale-dependent bias Δb(k) ∝ k⁻² amplifies large-scale modes (low ℓ)
+by orders of magnitude:
+    C_ℓ(f_NL ≠ 0) / C_ℓ(f_NL = 0) − 1  ∝  f_NL² / ℓ⁴   (rough scaling)
 
 References
 ----------
-Limber, ApJ 117, 134 (1953) - Original Limber equation
-LoVerde & Afshordi, PRD 78, 123506 (2008) - Limber for PNG
-Kaiser, MNRAS 227, 1 (1987) - Modern formulation
+Limber, ApJ 117, 134 (1953) — Original projection equation
+Kaiser, MNRAS 227, 1 (1987) — Modern angular power spectrum formulation
+LoVerde & Afshordi, PRD 78, 123506 (2008) — Extended Limber for PNG
 """
 
 import numpy as np

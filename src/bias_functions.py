@@ -1,17 +1,44 @@
 """
-Bias functions for primordial non-Gaussianity in large-scale structure.
+bias_functions.py — Scale-dependent galaxy bias from primordial non-Gaussianity.
 
-This module implements scale-dependent bias functions for different shapes
-of primordial non-Gaussianity (PNG): local, equilateral, and orthogonal.
+Implements Δb(k, z) for local, equilateral, and orthogonal PNG shapes as used
+in the SPHEREx Fisher matrix forecast.
 
-The scale-dependent bias Δb(k,z) describes how PNG modifies the clustering
-of biased tracers (galaxies, halos) relative to the underlying matter distribution.
+Physics
+-------
+For **local** PNG (Dalal et al. 2008), the halo/galaxy bias acquires a
+scale-dependent correction that diverges as k → 0:
+
+    Δb_local(k, z) = 2 (b_1 − 1) f_NL δ_c × [3 Ω_m H_0² / (c² k² T(k) D(z))]
+
+where:
+  - b_1   : linear (Eulerian) galaxy bias
+  - f_NL  : local non-Gaussianity amplitude
+  - δ_c   = 1.686 : collapse threshold
+  - T(k)  : CDM transfer function (≈ 1 for k ≪ k_eq)
+  - D(z)  : linear growth factor (normalised to 1 at z = 0)
+
+The factor (b_1 − 1) arises from peak-background split; unbiased tracers
+(b_1 = 1) carry no PNG signature.
+
+Physical intuition
+------------------
+Local PNG couples short- and long-wavelength modes, so halos preferentially
+form in regions where Φ (the primordial potential) is large.  On scales
+k ≲ 0.01 h/Mpc, |Δb| / b_1 ~ 1–10 for |f_NL| ~ 1–10.
+
+Observed power spectrum
+-----------------------
+    P_obs(k, z) = [b_1 + Δb(k, z, f_NL)]² P_m(k, z)
+
+where P_m is the matter power spectrum (src.cosmology.get_power_spectrum).
 
 References
 ----------
-Dalal et al., PRD 77, 123514 (2008) - Local PNG bias
-Sefusatti & Komatsu, PRD 76, 083004 (2007) - Equilateral and orthogonal PNG bias
-Desjacques et al., Phys. Rept. 733, 1 (2018) - Comprehensive review
+Dalal et al., PRD 77, 123514 (2008) — Scale-dependent bias, local PNG
+Sefusatti & Komatsu, PRD 76, 083004 (2007) — Equilateral/orthogonal PNG
+Matarrese & Verde, ApJL 677, L77 (2008) — Physical derivation
+Desjacques, Jeong & Schmidt, Phys. Rept. 733, 1 (2018) — Comprehensive review
 """
 
 import numpy as np
@@ -408,3 +435,44 @@ if __name__ == "__main__":
             delta_b_local(k_large, z_test, fNL_test, b1_test)
     print(f"\nLocal bias ratio Δb(k=0.01)/Δb(k=0.1) = {ratio:.1f}")
     print(f"Expected for 1/k² scaling: {(k_large/k_small)**2:.1f}")
+
+
+def get_scale_dependent_bias(k, b1, fNL=0.0, z=0.0):
+    """
+    Compute the local-type scale-dependent bias correction Δb(k, z).
+
+    This is a convenience wrapper around :func:`delta_b_local` with an
+    argument order suited for interactive use and unit testing.
+
+    Parameters
+    ----------
+    k : float or array_like
+        Wavenumber in h/Mpc.
+    b1 : float
+        Linear bias parameter (b1 = 1 → unbiased tracer → returns 0).
+    fNL : float, optional
+        Local-type primordial non-Gaussianity parameter (default: 0).
+        When fNL = 0 the function returns 0 for any k.
+    z : float, optional
+        Redshift (default: 0).
+
+    Returns
+    -------
+    delta_b : float or array_like
+        Scale-dependent bias correction
+        Δb(k, z) = 2(b₁−1) f_NL δ_c (3Ω_m H₀²/c²) / (k² T(k) D(z)).
+
+    Notes
+    -----
+    The result is equivalent to calling::
+
+        delta_b_local(k, z, fNL, b1)
+
+    The wrapper exists so that callers can pass ``fNL`` and ``z`` as keyword
+    arguments after the positional ``k`` and ``b1`` arguments.
+
+    References
+    ----------
+    Dalal et al., PRD 77, 123514 (2008)
+    """
+    return delta_b_local(k, z, fNL, b1)
