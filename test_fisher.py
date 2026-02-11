@@ -18,7 +18,9 @@ from pathlib import Path
 
 from src.limber import get_comoving_distance, get_hubble, get_angular_power_spectrum
 from src.fisher import compute_fisher_matrix, get_constraints, compute_constraints_vs_ell_max
-from src.survey_specs import get_noise_power_spectrum_simple, F_SKY
+from src.survey_specs import (get_noise_power_spectrum_simple, F_SKY,
+                               get_shot_noise_angular, get_bias, N_SAMPLES,
+                               SPHEREX_Z_BINS)
 
 
 def test_comoving_distance():
@@ -260,52 +262,66 @@ def generate_angular_power_spectrum_plot():
 
 
 def generate_noise_comparison_plot():
-    """Generate figure: Signal vs noise comparison."""
+    """Generate figure: Galaxy signal vs shot noise for all 5 SPHEREx samples."""
     print("\n" + "=" * 70)
     print("GENERATING FIGURE: noise_comparison.png")
     print("=" * 70)
 
     ell = np.logspace(1, 3, 30)
-    z_min, z_max = 0.5, 1.5
+    # Use SPHEREx z_bin 4: [0.8, 1.0] — the most informative bin
+    z_bin_idx = 4
+    z_min, z_max = SPHEREX_Z_BINS[z_bin_idx]
     z_mid = (z_min + z_max) / 2.0
-    b1 = 2.0
 
-    # Compute signal
-    C_ell_signal = get_angular_power_spectrum(ell, z_min, z_max, b1, fNL=0, shape='local')
+    # Compute galaxy shot noise N_ℓ for each sample (constant vs ℓ)
+    chi = get_comoving_distance(z_mid)
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+    sample_labels = [f'Sample {s}' for s in range(1, N_SAMPLES + 1)]
 
-    # Compute noise for different survey modes
-    N_ell_full = get_noise_power_spectrum_simple(ell, z_mid, survey_mode='full')
-    N_ell_deep = get_noise_power_spectrum_simple(ell, z_mid, survey_mode='deep')
+    print(f"  z bin [{z_min:.1f}, {z_max:.1f}], z_mid = {z_mid:.2f}")
 
-    print(f"  Computed signal C_ℓ(fNL=0)")
-    print(f"  Computed noise N_ℓ (full and deep)")
+    shot_noises = []
+    signals = []
+    for s in range(1, N_SAMPLES + 1):
+        b1 = get_bias(s, z_bin_idx)
+        N_ell_s = get_shot_noise_angular(s, z_bin_idx, z_mid, chi)
+        C_ell_s = get_angular_power_spectrum(ell, z_min, z_max, b1, fNL=0, shape='local')
+        shot_noises.append(N_ell_s)
+        signals.append(C_ell_s)
+        print(f"  Sample {s}: b₁={b1:.2f}, N_ℓ={N_ell_s:.2e}, C_ℓ(100)={C_ell_s[15]:.2e}")
 
     # Create figure
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
 
-    # Top panel: Signal and noise
-    ax1.loglog(ell, C_ell_signal, 'b-', linewidth=2.5, label='Signal $C_\\ell$ ($f_{\\rm NL}=0$)')
-    ax1.loglog(ell, N_ell_full, 'r--', linewidth=2, label='Noise $N_\\ell$ (full survey)')
-    ax1.loglog(ell, N_ell_deep, 'g:', linewidth=2, label='Noise $N_\\ell$ (deep fields)')
+    # Top panel: Signal and shot noise per sample
+    for s_idx in range(N_SAMPLES):
+        ax1.loglog(ell, signals[s_idx], color=colors[s_idx], linewidth=2,
+                   label=f'{sample_labels[s_idx]} $C_\\ell$')
+        ax1.axhline(shot_noises[s_idx], color=colors[s_idx], linewidth=1.5,
+                    linestyle='--', alpha=0.7)
+        ax1.annotate(f'$N_\\ell$ S{s_idx+1}',
+                     xy=(ell[-1], shot_noises[s_idx]),
+                     xytext=(3, 0), textcoords='offset points',
+                     va='center', fontsize=8, color=colors[s_idx])
 
     ax1.set_xlabel(r'Multipole $\ell$', fontsize=14)
-    ax1.set_ylabel(r'Power Spectrum [(nW/m$^2$/sr)$^2$]', fontsize=14)
-    ax1.set_title('Signal vs Noise for SPHEREx Line Intensity Mapping', fontsize=14)
-    ax1.legend(fontsize=12, loc='upper right')
+    ax1.set_ylabel(r'Angular Power Spectrum (dimensionless)', fontsize=14)
+    ax1.set_title(f'Galaxy Signal $C_\\ell$ vs Shot Noise $N_\\ell$\n'
+                  f'SPHEREx z ∈ [{z_min:.1f}, {z_max:.1f}]', fontsize=14)
+    ax1.legend(fontsize=10, loc='upper right', ncol=2)
     ax1.grid(True, alpha=0.3, which='both')
 
-    # Bottom panel: Signal-to-noise ratio
-    SNR_full = np.sqrt(C_ell_signal / N_ell_full)
-    SNR_deep = np.sqrt(C_ell_signal / N_ell_deep)
-
-    ax2.loglog(ell, SNR_full, 'r--', linewidth=2, label='S/N (full survey)')
-    ax2.loglog(ell, SNR_deep, 'g:', linewidth=2, label='S/N (deep fields)')
+    # Bottom panel: S/N per mode for each sample
+    for s_idx in range(N_SAMPLES):
+        SNR_s = np.sqrt(signals[s_idx] / shot_noises[s_idx])
+        ax2.loglog(ell, SNR_s, color=colors[s_idx], linewidth=2,
+                   label=sample_labels[s_idx])
     ax2.axhline(1, color='k', linestyle='-', linewidth=1, alpha=0.5, label='S/N = 1')
 
     ax2.set_xlabel(r'Multipole $\ell$', fontsize=14)
-    ax2.set_ylabel(r'Signal-to-Noise Ratio (per mode)', fontsize=14)
-    ax2.set_title('Signal-to-Noise Ratio', fontsize=14)
-    ax2.legend(fontsize=12, loc='upper right')
+    ax2.set_ylabel(r'Signal-to-Noise per Mode $\sqrt{C_\ell/N_\ell}$', fontsize=14)
+    ax2.set_title('Galaxy Survey Signal-to-Noise Ratio per Mode', fontsize=14)
+    ax2.legend(fontsize=10, loc='upper right')
     ax2.grid(True, alpha=0.3, which='both')
 
     plt.tight_layout()
@@ -322,44 +338,62 @@ def generate_noise_comparison_plot():
 
 
 def generate_fisher_constraints_plot():
-    """Generate figure: σ(fNL) vs ℓ_max."""
+    """Generate figure: σ(fNL) vs ℓ_max using Sample 1 galaxy shot noise."""
     print("\n" + "=" * 70)
     print("GENERATING FIGURE: fisher_constraints.png")
     print("=" * 70)
 
     ell_max_array = np.array([50, 100, 200, 300, 500, 700, 1000])
-    z_bins = [(0.5, 1.5)]
-    b1_values = [2.0]
+    # Use two adjacent SPHEREx bins to cover z ≈ [0.8, 1.6]
+    z_bin_indices = [4, 5]  # [0.8,1.0] and [1.0,1.6]
+    z_bins = [SPHEREX_Z_BINS[i] for i in z_bin_indices]
+    b1_values = [get_bias(1, i) for i in z_bin_indices]
 
-    print(f"  Computing constraints vs ℓ_max...")
+    # Galaxy shot noise for Sample 1 in each z-bin
+    N_ell_values = []
+    for z_idx in z_bin_indices:
+        z_min, z_max = SPHEREX_Z_BINS[z_idx]
+        z_mid = (z_min + z_max) / 2.0
+        chi = get_comoving_distance(z_mid)
+        N_ell_values.append(get_shot_noise_angular(1, z_idx, z_mid, chi))
+
+    print(f"  Sample 1, z bins {z_bins}, b1 = {b1_values}")
+    print(f"  Galaxy shot noise N_ℓ = {N_ell_values}")
     print(f"  Testing ℓ_max values: {ell_max_array}")
 
-    # Compute constraints for local PNG
+    # Compute constraints for local PNG with correct galaxy shot noise
     sigma_local = compute_constraints_vs_ell_max(
         ell_max_array, z_bins, 'fNL_local', b1_values=b1_values,
-        ell_min=10, f_sky=F_SKY, survey_mode='full'
+        ell_min=10, f_sky=F_SKY, N_ell_values=N_ell_values
     )
 
     # Create figure
     fig, ax = plt.subplots(figsize=(10, 7))
 
     ax.loglog(ell_max_array, sigma_local, 'bo-', linewidth=2.5, markersize=8,
-              label='$\\sigma(f_{\\rm NL}^{\\rm local})$')
+              label='$\\sigma(f_{\\rm NL}^{\\rm local})$ (Sample 1)')
 
     # Add reference line: σ ∝ 1/sqrt(ℓ_max)
-    # This is expected if adding more modes improves constraints
     reference = sigma_local[0] * np.sqrt(ell_max_array[0] / ell_max_array)
     ax.loglog(ell_max_array, reference, 'k--', linewidth=1.5, alpha=0.5,
               label=r'$\propto 1/\sqrt{\ell_{\rm max}}$ (reference)')
 
+    # Add Planck reference
+    ax.axhline(4.7, color='green', linewidth=1.5, linestyle=':', alpha=0.7,
+               label='Planck 2018 (CMB)')
+
     ax.set_xlabel(r'Maximum Multipole $\ell_{\rm max}$', fontsize=14)
     ax.set_ylabel(r'$\sigma(f_{\rm NL}^{\rm local})$', fontsize=14)
-    ax.set_title('Fisher Matrix Constraints vs Maximum Multipole\nSPHEREx-like Survey', fontsize=14)
+    ax.set_title('Fisher Matrix Constraints vs Maximum Multipole\n'
+                 'SPHEREx Sample 1, z ∈ [0.8, 1.6], Galaxy Shot Noise', fontsize=14)
     ax.legend(fontsize=12, loc='upper right')
     ax.grid(True, alpha=0.3, which='both')
 
     # Add text box with key results
-    textstr = f'$z \\in [0.5, 1.5]$, $b_1 = 2.0$\\n$f_{{\\rm sky}} = 0.75$\\n$\\sigma(f_{{\\rm NL}}) = {sigma_local[-1]:.2f}$ at $\\ell_{{\\rm max}} = 1000$'
+    textstr = (f'SPHEREx Sample 1\n'
+               f'z ∈ [0.8, 1.6], $f_{{\\rm sky}} = 0.75$\n'
+               f'Galaxy shot noise $N_\\ell$\n'
+               f'$\\sigma(f_{{\\rm NL}}) = {sigma_local[-1]:.2f}$ at $\\ell_{{\\rm max}} = 1000$')
     ax.text(0.05, 0.05, textstr, transform=ax.transAxes, fontsize=11,
             verticalalignment='bottom', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
 

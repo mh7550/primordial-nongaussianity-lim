@@ -1,14 +1,44 @@
 """
-SPHEREx survey specifications and noise models.
+survey_specs.py — SPHEREx galaxy survey parameters for PNG forecasting.
 
-This module provides survey parameters and noise calculations for the
+Defines the photometric redshift bins, galaxy samples, number densities,
+biases, and angular shot noise for SPHEREx as used in the Fisher forecast.
+
+Survey overview
+---------------
 SPHEREx (Spectro-Photometer for the History of the Universe, Epoch of
-Reionization and Ices Explorer) mission.
+Reionization and Ices Explorer) is a NASA MIDEX mission observing the full
+sky in 102 spectral channels spanning 0.75–5 μm.  It measures photometric
+redshifts for ~450 million galaxies.
+
+Galaxy samples
+--------------
+Five galaxy samples with increasing photometric redshift quality:
+
+  Sample 1: High photo-z quality  — lowest density, highest bias, highest shot noise
+  Sample 2: ...
+  Sample 3: ...
+  Sample 4: ...
+  Sample 5: Low photo-z quality   — highest density, lowest bias, lowest shot noise
+
+Redshift bins
+-------------
+11 bins covering z = [0, 4.6]:
+  [0.0, 0.2], [0.2, 0.4], [0.4, 0.6], [0.6, 0.8], [0.8, 1.0],
+  [1.0, 1.6], [1.6, 2.2], [2.2, 2.8], [2.8, 3.4], [3.4, 4.0], [4.0, 4.6]
+
+Shot noise
+----------
+Angular shot noise for sample s in bin z:
+
+    N_ℓ^s = 1 / (n̄_s × χ²(z_mid) × Δχ)
+
+where n̄_s is the comoving number density in (h/Mpc)³ and Δχ = (c/H) Δz.
 
 References
 ----------
+Doré et al., arXiv:1412.4872 (2014) — SPHEREx science case
 SPHEREx Public Products: https://github.com/SPHEREx/Public-products
-Doré et al., arXiv:1412.4872 (2014) - SPHEREx mission concept
 """
 
 import numpy as np
