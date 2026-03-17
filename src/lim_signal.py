@@ -242,8 +242,8 @@ def get_halo_bias_simple(z):
     b_eff = np.zeros_like(z, dtype=float)
 
     # Mass range for integration (in M_sun/h)
-    # Use M_min = 1e12 to ensure b(z=0) >= 1 for luminous star-forming galaxies
-    M_min = 1e12  # M_sun/h
+    # Use M_min = 1e11 to include broader halo population (Cheng et al. 2024)
+    M_min = 1e11  # M_sun/h
     M_max = 1e16  # M_sun/h
     n_mass = 100  # Number of mass samples for integration
     M_array = np.logspace(np.log10(M_min), np.log10(M_max), n_mass)
