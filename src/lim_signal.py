@@ -175,11 +175,16 @@ def get_line_luminosity_density(z, line='Halpha'):
 
 def get_halo_bias_simple(z):
     """
-    Compute halo-mass-weighted effective bias b(z) using a simple approximation.
+    Compute halo-mass-weighted effective bias b_i(z) using Sheth-Tormen formalism.
 
-    This uses a phenomenological fitting formula calibrated to simulations.
-    For a more accurate calculation, one would integrate over the halo mass
-    function weighted by line luminosity.
+    Implements the full halo-mass-weighted bias calculation following
+    Cheng et al. (2024) Eq. 19:
+
+        b_i(z) = ∫ dM (dn/dM)(M,z) b_h(M,z) / ∫ dM (dn/dM)(M,z)
+
+    where:
+    - dn/dM is the Sheth-Tormen (1999) halo mass function
+    - b_h(M,z) is the Sheth, Mo & Tormen (2001) halo bias
 
     Parameters
     ----------
@@ -189,41 +194,87 @@ def get_halo_bias_simple(z):
     Returns
     -------
     b_eff : float or array_like
-        Effective halo bias (dimensionless)
+        Halo-mass-weighted effective bias (dimensionless)
 
     Notes
     -----
-    We use the simple approximation from Fonseca et al. (2017):
-
-        b_eff(z) ≈ 0.84 + 0.61 × D(z=0) / D(z)
-
-    where D(z) is the linear growth factor. This captures the key feature
-    that bias increases with redshift as structure is less evolved.
+    This calculation assumes that line luminosity is roughly proportional
+    to halo mass (or equivalently, that we're integrating over the full
+    mass range of star-forming halos). The mass integration is performed
+    from M_min = 10^10 M_sun/h to M_max = 10^16 M_sun/h.
 
     For lines dominated by star-forming galaxies at z ~ 2, typical values
-    are b_eff ~ 2-3.
+    are b_eff ~ 2-3. The bias increases with redshift as structure becomes
+    less evolved.
 
-    A more sophisticated calculation would use:
-        b_eff(z) = ∫ dn/dM × b(M,z) × L_line(M,z) dM / ∫ dn/dM × L_line(M,z) dM
-
-    where dn/dM is the Sheth-Tormen halo mass function and b(M,z) is the
-    Sheth-Tormen bias (Sheth & Tormen 1999).
+    Uses the colossus library for numerically stable implementations of
+    the Sheth-Tormen mass function and bias.
 
     References
     ----------
-    Fonseca et al., MNRAS 464, 1948 (2017) — Eq. 21
-    Sheth & Tormen, MNRAS 308, 119 (1999) — Halo bias model
+    Cheng et al., Phys. Rev. D 109, 103011 (2024) — Eq. 19
+    Sheth & Tormen, MNRAS 308, 119 (1999) — Halo mass function
+    Sheth, Mo & Tormen, MNRAS 323, 1 (2001) — Halo bias
     """
+    try:
+        from colossus.cosmology import cosmology as colossus_cosmology
+        from colossus.lss import mass_function
+        from colossus.lss import bias as colossus_bias
+    except ImportError:
+        raise ImportError(
+            "colossus library required for Sheth-Tormen bias calculation. "
+            "Install with: pip install colossus"
+        )
+
     z = np.asarray(z)
+    scalar_input = z.ndim == 0
+    if scalar_input:
+        z = z[None]
 
-    # Get growth factor D(z) normalized to D(z=0) = 1
-    D_z = get_growth_factor(z)
-    D_0 = get_growth_factor(0.0)
+    # Initialize colossus cosmology (only once)
+    # Use Planck18 parameters to match our cosmology.py
+    try:
+        cosmo = colossus_cosmology.setCosmology('planck18')
+    except:
+        # If already set, just get it
+        cosmo = colossus_cosmology.getCurrent()
 
-    # Fonseca et al. (2017) fitting formula
-    # b_eff(z) ≈ 0.84 + 0.61 × D(0)/D(z)
-    b_eff = 0.84 + 0.61 * (D_0 / D_z)
+    b_eff = np.zeros_like(z, dtype=float)
 
+    # Mass range for integration (in M_sun/h)
+    M_min = 1e10  # M_sun/h
+    M_max = 1e16  # M_sun/h
+    n_mass = 100  # Number of mass samples for integration
+    M_array = np.logspace(np.log10(M_min), np.log10(M_max), n_mass)
+
+    for i, zi in enumerate(z):
+        # Get halo mass function dn/dM (units: h^4 Mpc^-3 M_sun^-1)
+        # Sheth-Tormen 1999 uses FoF mass definition
+        # Returns dn/dlnM, so we convert: dn/dM = (dn/dlnM) / M
+        mfunc = mass_function.massFunction(M_array, zi, mdef='fof', model='sheth99', q_out='dndlnM')
+        # mfunc is dn/dlnM, so dn/dM = (dn/dlnM) / M
+        dn_dM = mfunc / M_array  # h^4 Mpc^-3 M_sun^-1
+
+        # Get halo bias b_h(M,z) (dimensionless)
+        # Sheth, Mo & Tormen 2001 bias also uses FoF definition
+        b_h = colossus_bias.haloBias(M_array, model='sheth01', z=zi, mdef='fof')
+
+        # Integrate: numerator = ∫ (dn/dM) × b_h × dM
+        # Using log spacing for integration: ∫ f dM = ∫ f M d(ln M)
+        lnM = np.log(M_array)
+        numerator = integrate.simpson(dn_dM * b_h * M_array, x=lnM)
+
+        # Integrate: denominator = ∫ (dn/dM) × dM
+        denominator = integrate.simpson(dn_dM * M_array, x=lnM)
+
+        # Mass-weighted bias
+        if denominator > 0:
+            b_eff[i] = numerator / denominator
+        else:
+            b_eff[i] = 1.0  # fallback
+
+    if scalar_input:
+        return b_eff[0]
     return b_eff
 
 
