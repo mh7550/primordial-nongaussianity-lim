@@ -132,14 +132,17 @@ def get_line_luminosity_density(z, line='Halpha'):
 
     Notes
     -----
-    Following Cheng et al. (2024) Eq. 2:
+    Following Cheng et al. (2024) Eq. 2 and Table 1:
 
-        M₀ᵢ(z) = rᵢ × Aᵢ × SFRD(z)
+        M₀ᵢ(z) = rᵢ × SFRD(z) / Aᵢ
 
     where:
     - rᵢ is the line luminosity per star formation rate (erg/s per M_sun/yr)
-    - Aᵢ is the dust extinction correction factor
+    - Aᵢ is the dust extinction/attenuation factor (higher = more extinction)
     - SFRD(z) is the star formation rate density (M_sun/yr/Mpc³)
+
+    The dust factor Aᵢ is in the denominator because it represents attenuation:
+    higher Aᵢ means more dust absorption, resulting in lower observed luminosity.
 
     For Hβ, we use the case B recombination ratio:
         L_Hβ / L_Hα = 0.35
@@ -159,16 +162,18 @@ def get_line_luminosity_density(z, line='Halpha'):
     if line == 'Hbeta':
         # Get Hα luminosity density first
         M0_Halpha = get_line_luminosity_density(z, line='Halpha')
-        # Apply Hβ/Hα ratio and Hβ dust correction relative to Hα
+        # Apply Hβ/Hα ratio and Hβ dust attenuation relative to Hα
+        # Higher A_i means MORE dust extinction, so LESS observed light
         A_Hbeta = props['A_i']
         A_Halpha = LINE_PROPERTIES['Halpha']['A_i']
         ratio = props['ratio_to_Halpha']
-        M0_i = M0_Halpha * ratio * (A_Hbeta / A_Halpha)
+        M0_i = M0_Halpha * ratio * (A_Halpha / A_Hbeta)
     else:
-        # Standard case: M₀ᵢ = rᵢ × Aᵢ × SFRD
+        # Standard case: M₀ᵢ = rᵢ × SFRD / Aᵢ
+        # A_i is dust extinction - higher A_i means more attenuation
         r_i = props['r_i']
         A_i = props['A_i']
-        M0_i = r_i * A_i * sfrd
+        M0_i = r_i * sfrd / A_i
 
     return M0_i
 
@@ -242,31 +247,31 @@ def get_halo_bias_simple(z):
     b_eff = np.zeros_like(z, dtype=float)
 
     # Mass range for integration (in M_sun/h)
-    # Use M_min = 1e12 to ensure b(z=0) >= 1 for luminous star-forming galaxies
-    M_min = 1e12  # M_sun/h
+    # Cheng et al. (2024) Eq. 19: integrate full halo mass function with no physical cut
+    # The integral naturally converges due to exponential drop of dn/dM at high mass
+    M_min = 1e8   # M_sun/h (numerical lower limit only)
     M_max = 1e16  # M_sun/h
     n_mass = 100  # Number of mass samples for integration
     M_array = np.logspace(np.log10(M_min), np.log10(M_max), n_mass)
 
     for i, zi in enumerate(z):
-        # Get halo mass function dn/dM (units: h^4 Mpc^-3 M_sun^-1)
+        # Get halo mass function dn/d(lnM) (units: h^3 Mpc^-3)
         # Sheth-Tormen 1999 uses FoF mass definition
-        # Returns dn/dlnM, so we convert: dn/dM = (dn/dlnM) / M
-        mfunc = mass_function.massFunction(M_array, zi, mdef='fof', model='sheth99', q_out='dndlnM')
-        # mfunc is dn/dlnM, so dn/dM = (dn/dlnM) / M
-        dn_dM = mfunc / M_array  # h^4 Mpc^-3 M_sun^-1
+        # For mass-weighted bias (L ∝ M), we need dn/d(lnM) directly
+        dn_dlnM = mass_function.massFunction(M_array, zi, mdef='fof', model='sheth99', q_out='dndlnM')
 
         # Get halo bias b_h(M,z) (dimensionless)
         # Sheth, Mo & Tormen 2001 bias also uses FoF definition
         b_h = colossus_bias.haloBias(M_array, model='sheth01', z=zi, mdef='fof')
 
-        # Integrate: numerator = ∫ (dn/dM) × b_h × dM
-        # Using log spacing for integration: ∫ f dM = ∫ f M d(ln M)
+        # Mass-weighted bias (L ∝ M): ∫ M (dn/dM) b_h dM / ∫ M (dn/dM) dM
+        # Converting to d(lnM) with dM = M d(lnM):
+        #   numerator = ∫ M (dn/dM) b_h M d(lnM) = ∫ (dn/d(lnM)) b_h M d(lnM)
         lnM = np.log(M_array)
-        numerator = integrate.simpson(dn_dM * b_h * M_array, x=lnM)
+        numerator = integrate.simpson(dn_dlnM * b_h * M_array, x=lnM)
 
-        # Integrate: denominator = ∫ (dn/dM) × dM
-        denominator = integrate.simpson(dn_dM * M_array, x=lnM)
+        # denominator = ∫ M (dn/dM) M d(lnM) = ∫ (dn/d(lnM)) M d(lnM)
+        denominator = integrate.simpson(dn_dlnM * M_array, x=lnM)
 
         # Mass-weighted bias
         if denominator > 0:
