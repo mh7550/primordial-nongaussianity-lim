@@ -132,14 +132,17 @@ def get_line_luminosity_density(z, line='Halpha'):
 
     Notes
     -----
-    Following Cheng et al. (2024) Eq. 2:
+    Following Cheng et al. (2024) Eq. 2 and Table 1:
 
-        M₀ᵢ(z) = rᵢ × Aᵢ × SFRD(z)
+        M₀ᵢ(z) = rᵢ × SFRD(z) / Aᵢ
 
     where:
     - rᵢ is the line luminosity per star formation rate (erg/s per M_sun/yr)
-    - Aᵢ is the dust extinction correction factor
+    - Aᵢ is the dust extinction/attenuation factor (higher = more extinction)
     - SFRD(z) is the star formation rate density (M_sun/yr/Mpc³)
+
+    The dust factor Aᵢ is in the denominator because it represents attenuation:
+    higher Aᵢ means more dust absorption, resulting in lower observed luminosity.
 
     For Hβ, we use the case B recombination ratio:
         L_Hβ / L_Hα = 0.35
@@ -159,16 +162,18 @@ def get_line_luminosity_density(z, line='Halpha'):
     if line == 'Hbeta':
         # Get Hα luminosity density first
         M0_Halpha = get_line_luminosity_density(z, line='Halpha')
-        # Apply Hβ/Hα ratio and Hβ dust correction relative to Hα
+        # Apply Hβ/Hα ratio and Hβ dust attenuation relative to Hα
+        # Higher A_i means MORE dust extinction, so LESS observed light
         A_Hbeta = props['A_i']
         A_Halpha = LINE_PROPERTIES['Halpha']['A_i']
         ratio = props['ratio_to_Halpha']
-        M0_i = M0_Halpha * ratio * (A_Hbeta / A_Halpha)
+        M0_i = M0_Halpha * ratio * (A_Halpha / A_Hbeta)
     else:
-        # Standard case: M₀ᵢ = rᵢ × Aᵢ × SFRD
+        # Standard case: M₀ᵢ = rᵢ × SFRD / Aᵢ
+        # A_i is dust extinction - higher A_i means more attenuation
         r_i = props['r_i']
         A_i = props['A_i']
-        M0_i = r_i * A_i * sfrd
+        M0_i = r_i * sfrd / A_i
 
     return M0_i
 
