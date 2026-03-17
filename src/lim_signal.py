@@ -250,24 +250,23 @@ def get_halo_bias_simple(z):
     M_array = np.logspace(np.log10(M_min), np.log10(M_max), n_mass)
 
     for i, zi in enumerate(z):
-        # Get halo mass function dn/dM (units: h^4 Mpc^-3 M_sun^-1)
+        # Get halo mass function dn/d(lnM) (units: h^3 Mpc^-3)
         # Sheth-Tormen 1999 uses FoF mass definition
-        # Returns dn/dlnM, so we convert: dn/dM = (dn/dlnM) / M
-        mfunc = mass_function.massFunction(M_array, zi, mdef='fof', model='sheth99', q_out='dndlnM')
-        # mfunc is dn/dlnM, so dn/dM = (dn/dlnM) / M
-        dn_dM = mfunc / M_array  # h^4 Mpc^-3 M_sun^-1
+        # For mass-weighted bias (L ∝ M), we need dn/d(lnM) directly
+        dn_dlnM = mass_function.massFunction(M_array, zi, mdef='fof', model='sheth99', q_out='dndlnM')
 
         # Get halo bias b_h(M,z) (dimensionless)
         # Sheth, Mo & Tormen 2001 bias also uses FoF definition
         b_h = colossus_bias.haloBias(M_array, model='sheth01', z=zi, mdef='fof')
 
-        # Integrate: numerator = ∫ (dn/dM) × b_h × dM
-        # Using log spacing for integration: ∫ f dM = ∫ f M d(ln M)
+        # Mass-weighted bias (L ∝ M): ∫ M (dn/dM) b_h dM / ∫ M (dn/dM) dM
+        # Converting to d(lnM) with dM = M d(lnM):
+        #   numerator = ∫ M (dn/dM) b_h M d(lnM) = ∫ (dn/d(lnM)) b_h M d(lnM)
         lnM = np.log(M_array)
-        numerator = integrate.simpson(dn_dM * b_h * M_array, x=lnM)
+        numerator = integrate.simpson(dn_dlnM * b_h * M_array, x=lnM)
 
-        # Integrate: denominator = ∫ (dn/dM) × dM
-        denominator = integrate.simpson(dn_dM * M_array, x=lnM)
+        # denominator = ∫ M (dn/dM) M d(lnM) = ∫ (dn/d(lnM)) M d(lnM)
+        denominator = integrate.simpson(dn_dlnM * M_array, x=lnM)
 
         # Mass-weighted bias
         if denominator > 0:
