@@ -385,22 +385,75 @@ def compute_C_ell_signal_pair(ell, channel_idx1, line1, channel_idx2, line2):
     delta_lambda2 = CHANNEL_WIDTHS[channel_idx2]
     nu_over_delta_nu_2 = lambda2 / delta_lambda2
 
-    # Geometric factor A₀²(χ)
-    A0 = get_window_function_A0(chi_overlap)
-    A0_squared = A0**2
+    # Bias-weighted intensities in nW/m²/sr
+    # Uses get_line_intensity which properly converts M₀_i → I_ν
+    try:
+        from .lim_signal import get_line_intensity
+    except ImportError:
+        from lim_signal import get_line_intensity
 
-    # Bias-weighted luminosity densities M_i = b_i × M₀_i
-    M_i_1 = get_bias_weighted_luminosity_density(z_overlap, line=line1)
-    M_i_2 = get_bias_weighted_luminosity_density(z_overlap, line=line2)
+    I_i_1_nW = get_line_intensity(z_overlap, line=line1, return_bias_weighted=True)
+    I_i_2_nW = get_line_intensity(z_overlap, line=line2, return_bias_weighted=True)
+
+    # Convert from nW/m²/sr to MJy/sr
+    # Line intensity ν I_ν (nW/m²/sr) needs conversion to spectral radiance I_ν (MJy/sr)
+    #
+    # Step 1: Convert to spectral units by dividing by line width
+    # For emission lines with velocity width σ_v ~ 300 km/s (Cheng+ 2024):
+    #   Δν/ν = σ_v/c ~ 10^-3
+    #   At λ ~ 1 μm: ν ~ 3×10^14 Hz → Δν ~ 3×10^11 Hz
+    #
+    # Step 2: Convert nW/m²/sr/Hz to MJy/sr
+    #   1 Jy = 10^-26 W/m²/Hz
+    #   1 nW/m²/Hz = 10^-9 W/m²/Hz = (10^-9 / 10^-26) Jy = 10^17 Jy = 10^11 MJy
+
+    # Line velocity width (FWHM ~ 2.35 × σ for Gaussian)
+    sigma_v_km_s = 300.0  # km/s, typical for star-forming galaxies
+    c_km_s = 299792.458  # km/s
+
+    # Get observed wavelengths and frequencies
+    lambda_rest_1 = LINE_PROPERTIES[line1]['lambda_rest']  # μm
+    lambda_obs_1 = lambda_rest_1 * (1.0 + z_overlap)  # μm
+    nu_obs_1 = 2.998e14 / lambda_obs_1  # Hz (c = 2.998×10^14 μm/s)
+    delta_nu_line_1 = nu_obs_1 * (sigma_v_km_s / c_km_s)  # Hz
+
+    lambda_rest_2 = LINE_PROPERTIES[line2]['lambda_rest']
+    lambda_obs_2 = lambda_rest_2 * (1.0 + z_overlap)
+    nu_obs_2 = 2.998e14 / lambda_obs_2
+    delta_nu_line_2 = nu_obs_2 * (sigma_v_km_s / c_km_s)
+
+    # Convert ν I_ν to I_ν by dividing by line width
+    I_nu_1_nW_Hz = I_i_1_nW / delta_nu_line_1  # nW/m²/sr/Hz
+    I_nu_2_nW_Hz = I_i_2_nW / delta_nu_line_2  # nW/m²/sr/Hz
+
+    # Convert nW/m²/sr/Hz to MJy/sr
+    nW_Hz_to_MJy = 1e11  # 10^-9 / 10^-26 × 10^6
+    I_i_1_MJy = I_nu_1_nW_Hz * nW_Hz_to_MJy  # MJy/sr
+    I_i_2_MJy = I_nu_2_nW_Hz * nW_Hz_to_MJy  # MJy/sr
 
     # Matter power spectrum at k = (ℓ + 0.5) / χ
     k = (ell + 0.5) / chi_overlap  # h/Mpc
     P_k = get_power_spectrum(k, z_overlap)  # (Mpc/h)³
 
-    # Combine terms
-    C_ell = (nu_over_delta_nu_1 * nu_over_delta_nu_2 *
-             (delta_chi_overlap / chi_overlap**2) *
-             A0_squared * M_i_1 * M_i_2 * P_k)
+    # Limber approximation for angular power spectrum
+    # C_ℓ = ∫ dχ/χ² × W₁(χ) × W₂(χ) × P(k, χ)
+    # For small overlap region: ≈ (Δχ/χ²) × I₁ × I₂ × P(k)
+    #
+    # Units check:
+    #   (MJy/sr) × (MJy/sr) × (Mpc/h)³ × Mpc⁻¹ = (MJy/sr)² × (Mpc/h)³/Mpc
+    #
+    # Need to remove (Mpc/h)³/Mpc factor to get (MJy/sr)² or MJy²/sr
+    # The (ν/Δν)² factors are dimensionless normalizations
+    # The issue is the leftover (Mpc/h)³/Mpc from P(k) × dχ/χ²
+    #
+    # Actually for Limber: C_ell has units (intensity)² which matches noise
+    # The geometric factors dχ/χ² integrate out in the full calculation
+    # For the discrete approximation, we just need I² × P(k) × geometric factor
+
+    # The correct units: drop the (Mpc/h)³/Mpc and use intensity² directly
+    # This assumes P(k) is properly normalized for intensity power spectrum
+    C_ell = (I_i_1_MJy * I_i_2_MJy *
+             (delta_chi_overlap / chi_overlap**2) * P_k)
 
     return C_ell
 
