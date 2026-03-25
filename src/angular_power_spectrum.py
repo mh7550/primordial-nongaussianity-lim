@@ -333,6 +333,213 @@ def compute_window_function(channel_idx, line, chi_grid=None):
 
 
 # ============================================================================
+# REDSHIFT SPACE DISTORTIONS (RSD)
+# ============================================================================
+
+def get_rsd_enhancement(z, bias):
+    """
+    Compute RSD enhancement factor for angular power spectrum.
+
+    Following Kaiser (1987), the effective power spectrum for line intensity
+    mapping including redshift-space distortions is:
+
+        P_eff(k,z) = P_matter(k,z) × (b² + (2/3)×b×f + (1/5)×f²)
+
+    where b is the halo bias and f = Ω_m(z)^0.55 is the linear growth rate.
+    This is the μ-averaged form from integrating (b + f×μ²)² over μ ∈ [-1,1].
+
+    Parameters
+    ----------
+    z : float or array_like
+        Redshift
+    bias : float or array_like
+        Halo bias b(z)
+
+    Returns
+    -------
+    enhancement : float or array_like
+        RSD enhancement factor = b² + (2/3)×b×f + (1/5)×f²
+
+    Notes
+    -----
+    RSD only affects the full Bessel integral calculation (Eq. 8), NOT the
+    Limber approximation. Limber only captures transverse modes (μ=0) which
+    are unaffected by RSD, consistent with Cheng et al. (2024) Section 2.2.
+
+    References
+    ----------
+    Kaiser, MNRAS 227, 1 (1987) — Redshift-space distortions
+    Cheng et al., Phys. Rev. D 109, 103011 (2024) — Appendix D
+    """
+    # Import cosmology to get Omega_m(z)
+    try:
+        from .cosmology import Om0, get_hubble, H0
+    except ImportError:
+        from cosmology import Om0, get_hubble, H0
+
+    z = np.asarray(z)
+    bias = np.asarray(bias)
+
+    # Compute Omega_m(z) = Omega_m0 × (1+z)³ × H0² / H(z)²
+    H_z = get_hubble(z)
+    Om_z = Om0 * (1.0 + z)**3 * (H0 / H_z)**2
+
+    # Linear growth rate: f(z) = Omega_m(z)^0.55
+    f = Om_z**0.55
+
+    # RSD enhancement: b² + (2/3)×b×f + (1/5)×f²
+    enhancement = bias**2 + (2.0/3.0) * bias * f + (1.0/5.0) * f**2
+
+    return enhancement
+
+
+# ============================================================================
+# FULL BESSEL INTEGRAL (for high-R channels where Limber invalid)
+# ============================================================================
+
+# k-grid for Bessel integral (precomputed, log-spaced)
+K_GRID_MIN = 1e-4  # h/Mpc
+K_GRID_MAX = 10.0  # h/Mpc
+N_K_GRID = 200
+K_GRID = np.logspace(np.log10(K_GRID_MIN), np.log10(K_GRID_MAX), N_K_GRID)
+
+
+def compute_bessel_chi_integral(ell, k, chi_grid, W_inu):
+    """
+    Compute line-of-sight integral I_iν(k,ℓ) for Bessel calculation.
+
+    Following Cheng et al. (2024) Eq. 8:
+
+        I_iν(k,ℓ) = ∫ dχ D(χ) W_iν(χ) j_ℓ(k×χ)
+
+    where j_ℓ is the spherical Bessel function of order ℓ.
+
+    Parameters
+    ----------
+    ell : int
+        Multipole order
+    k : float or array_like
+        Wavenumber in h/Mpc
+    chi_grid : array_like
+        Comoving distance grid in Mpc
+    W_inu : array_like
+        Window function W_iν(χ) on chi_grid
+
+    Returns
+    -------
+    I_inu : float or array_like (if k is array)
+        Line-of-sight integral value(s)
+    """
+    from scipy.special import spherical_jn
+    from scipy.integrate import trapezoid
+
+    k = np.asarray(k)
+    scalar_input = k.ndim == 0
+    k = np.atleast_1d(k)
+
+    # Compute D(χ) = linear growth factor
+    # For matter-dominated era, D(z) ∝ 1/(1+z), but use proper growth factor
+    z_grid = chi_to_z(chi_grid)
+    try:
+        from .cosmology import get_growth_factor
+    except ImportError:
+        from cosmology import get_growth_factor
+
+    D_grid = get_growth_factor(z_grid)
+
+    # Compute integral for each k value
+    I_inu = np.zeros(len(k))
+    for i, k_val in enumerate(k):
+        # j_ℓ(k×χ) on chi grid
+        jell = spherical_jn(ell, k_val * chi_grid)
+
+        # Integrand: D(χ) × W_iν(χ) × j_ℓ(k×χ)
+        integrand = D_grid * W_inu * jell
+
+        # Integrate over χ
+        I_inu[i] = trapezoid(integrand, chi_grid)
+
+    return I_inu[0] if scalar_input else I_inu
+
+
+def compute_C_ell_bessel_pair(ell, channel_idx1, line1, channel_idx2, line2,
+                                k_grid=None):
+    """
+    Compute C_ℓ using full Bessel integral (Cheng et al. 2024 Eq. 8).
+
+    For channels where Limber approximation is invalid (ℓ < limber_min),
+    use the exact line-of-sight calculation:
+
+        C_ℓ,νν',ii' = (2/π) ∫ dk k² P(k,z) I_iν(k,ℓ) I_i'ν'(k,ℓ)
+
+    where:
+        I_iν(k,ℓ) = ∫ dχ D(χ) W_iν(χ) j_ℓ(k×χ)
+
+    This includes RSD via P_eff(k,z) = P(k,z) × (b² + (2/3)×b×f + (1/5)×f²).
+
+    Parameters
+    ----------
+    ell : float
+        Multipole moment
+    channel_idx1, channel_idx2 : int
+        Channel indices
+    line1, line2 : str
+        Emission line names
+    k_grid : array_like, optional
+        Wavenumber grid for integration. Default: K_GRID
+
+    Returns
+    -------
+    C_ell : float
+        Angular power spectrum value
+    """
+    if k_grid is None:
+        k_grid = K_GRID
+
+    # Compute window functions on chi grid
+    W_inu_1, chi_grid = compute_window_function(channel_idx1, line1)
+    W_inu_2, _ = compute_window_function(channel_idx2, line2)
+
+    # Check for overlap
+    if np.sum(W_inu_1) == 0 or np.sum(W_inu_2) == 0:
+        return 0.0
+
+    # Compute line-of-sight integrals I_iν(k,ℓ) for each window function
+    I_inu_1 = compute_bessel_chi_integral(ell, k_grid, chi_grid, W_inu_1)
+    I_inu_2 = compute_bessel_chi_integral(ell, k_grid, chi_grid, W_inu_2)
+
+    # Find effective redshift (where windows overlap most)
+    overlap_mask = (W_inu_1 > 0) & (W_inu_2 > 0)
+    if not np.any(overlap_mask):
+        return 0.0
+
+    chi_overlap = chi_grid[overlap_mask][np.argmax(W_inu_1[overlap_mask] * W_inu_2[overlap_mask])]
+    z_overlap = chi_to_z(chi_overlap)
+
+    # Get bias for RSD calculation
+    bias_overlap = get_halo_bias_simple(z_overlap)
+    rsd_factor = get_rsd_enhancement(z_overlap, bias_overlap)
+
+    # Compute P(k,z) with RSD on k grid
+    try:
+        from .cosmology import get_power_spectrum
+    except ImportError:
+        from cosmology import get_power_spectrum
+
+    P_k = np.array([get_power_spectrum(k, z_overlap) for k in k_grid])
+    P_eff = P_k * rsd_factor
+
+    # Integrand: k² × P_eff(k,z) × I_iν(k) × I_i'ν'(k)
+    integrand = k_grid**2 * P_eff * I_inu_1 * I_inu_2
+
+    # Integrate over k: (2/π) ∫ dk ...
+    from scipy.integrate import trapezoid
+    C_ell = (2.0 / np.pi) * trapezoid(integrand, k_grid)
+
+    return C_ell
+
+
+# ============================================================================
 # ANGULAR POWER SPECTRUM — SIGNAL
 # ============================================================================
 
@@ -382,11 +589,62 @@ def compute_C_ell_signal_pair(ell, channel_idx1, line1, channel_idx2, line2):
     """
     Compute signal angular power spectrum for a single (ν,i) × (ν',i') pair.
 
-    Following Cheng et al. (2024) Eq. 13 (Limber approximation):
+    Uses channel-dependent calculation strategy based on Limber validity:
+    - If ℓ > limber_min for BOTH channels: Limber approximation (Eq. 13)
+    - If ℓ <= limber_min for EITHER channel: Full Bessel integral (Eq. 8)
 
-        C_ℓ,νν',ii' = (ν/Δν)(ν'/Δν') × (Δχ_overlap / χ²_overlap) ×
-                      A₀²(χ_overlap) × M_i(χ_overlap) × M_i'(χ_overlap) ×
-                      P((ℓ + 0.5) / χ_overlap, z_overlap)
+    Limber approximation (Cheng et al. 2024 Eq. 13):
+        C_ℓ,νν',ii' = (ν/Δν)(ν'/Δν') × (Δχ/χ²) × A₀² × M_i × M_i' × P(k,z)
+
+    Full Bessel integral (Cheng et al. 2024 Eq. 8):
+        C_ℓ,νν',ii' = (2/π) ∫ dk k² P_eff(k,z) I_iν(k,ℓ) I_i'ν'(k,ℓ)
+
+    where I_iν(k,ℓ) = ∫ dχ D(χ) W_iν(χ) j_ℓ(k×χ) and P_eff includes RSD.
+
+    Parameters
+    ----------
+    ell : float
+        Multipole moment
+    channel_idx1, channel_idx2 : int
+        Channel indices (0 to 91 for 6-band configuration)
+    line1, line2 : str
+        Emission line names
+
+    Returns
+    -------
+    C_ell : float
+        Angular power spectrum value (MJy²/sr²)
+
+    Notes
+    -----
+    The Bessel integral is computationally expensive (~100-1000× slower than
+    Limber). For the 6-band configuration:
+    - Bands 1-4: Mix of Limber and Bessel depending on ℓ
+    - Bands 5-6 (R=110/130): Always Bessel (limber_min > 350)
+    """
+    # Check Limber validity for both channels
+    limber_min_1 = LIMBER_MIN[channel_idx1]
+    limber_min_2 = LIMBER_MIN[channel_idx2]
+
+    # Use Limber if ℓ > limber_min for BOTH channels
+    use_limber = (ell > limber_min_1) and (ell > limber_min_2)
+
+    if use_limber:
+        # LIMBER APPROXIMATION (fast)
+        return _compute_C_ell_limber_pair(ell, channel_idx1, line1,
+                                           channel_idx2, line2)
+    else:
+        # FULL BESSEL INTEGRAL (slow but accurate)
+        return compute_C_ell_bessel_pair(ell, channel_idx1, line1,
+                                          channel_idx2, line2)
+
+
+def _compute_C_ell_limber_pair(ell, channel_idx1, line1, channel_idx2, line2):
+    """
+    Compute C_ℓ using Limber approximation (Cheng et al. 2024 Eq. 13).
+
+    This is the fast method, valid only when ℓ > limber_min for both channels.
+    RSD is NOT included (Limber only captures transverse modes, μ=0).
 
     Parameters
     ----------
