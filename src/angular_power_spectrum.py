@@ -691,35 +691,33 @@ def _compute_C_ell_limber_pair(ell, channel_idx1, line1, channel_idx2, line2):
     I_i_2_nW = get_line_intensity(z_overlap, line=line2, return_bias_weighted=True)
 
     # Convert from nW/m²/sr to MJy/sr
-    # Line intensity ν I_ν (nW/m²/sr) needs conversion to spectral radiance I_ν (MJy/sr)
+    # For LINE INTENSITY MAPPING with broadband photometry, we use CHANNEL width
+    # not intrinsic line width. SPHEREx integrates all emission within the channel.
     #
-    # Step 1: Convert to spectral units by dividing by line width
-    # For emission lines with velocity width σ_v ~ 300 km/s (Cheng+ 2024):
-    #   Δν/ν = σ_v/c ~ 10^-3
-    #   At λ ~ 1 μm: ν ~ 3×10^14 Hz → Δν ~ 3×10^11 Hz
+    # Key insight: SPHEREx noise is continuum noise integrated over channel bandwidth.
+    # Signal should also be "per channel" not "per intrinsic line width" to match.
     #
-    # Step 2: Convert nW/m²/sr/Hz to MJy/sr
+    # Step 1: Compute channel bandwidth
+    # Step 2: Convert ν I_ν (nW/m²/sr) to I_ν (nW/m²/sr/Hz) using channel width
+    # Step 3: Convert nW/m²/sr/Hz to MJy/sr
     #   1 Jy = 10^-26 W/m²/Hz
-    #   1 nW/m²/Hz = 10^-9 W/m²/Hz = (10^-9 / 10^-26) Jy = 10^17 Jy = 10^11 MJy
+    #   1 nW/m²/Hz = 10^-9 W/m²/Hz = 10^17 Jy = 10^11 MJy
 
-    # Line velocity width (FWHM ~ 2.35 × σ for Gaussian)
-    sigma_v_km_s = 300.0  # km/s, typical for star-forming galaxies
-    c_km_s = 299792.458  # km/s
+    # Channel bandwidths (use actual SPHEREx channel widths)
+    delta_lambda1 = CHANNEL_WIDTHS[channel_idx1]  # μm
+    delta_lambda2 = CHANNEL_WIDTHS[channel_idx2]  # μm
 
-    # Get observed wavelengths and frequencies
-    lambda_rest_1 = LINE_PROPERTIES[line1]['lambda_rest']  # μm
-    lambda_obs_1 = lambda_rest_1 * (1.0 + z_overlap)  # μm
-    nu_obs_1 = 2.998e14 / lambda_obs_1  # Hz (c = 2.998×10^14 μm/s)
-    delta_nu_line_1 = nu_obs_1 * (sigma_v_km_s / c_km_s)  # Hz
+    # Convert to frequency bandwidths: Δν = c Δλ / λ²
+    lambda_obs_1 = CHANNEL_CENTERS[channel_idx1]  # μm
+    lambda_obs_2 = CHANNEL_CENTERS[channel_idx2]  # μm
+    c_um_s = 2.998e14  # c in μm/s
 
-    lambda_rest_2 = LINE_PROPERTIES[line2]['lambda_rest']
-    lambda_obs_2 = lambda_rest_2 * (1.0 + z_overlap)
-    nu_obs_2 = 2.998e14 / lambda_obs_2
-    delta_nu_line_2 = nu_obs_2 * (sigma_v_km_s / c_km_s)
+    delta_nu_chan_1 = c_um_s * delta_lambda1 / lambda_obs_1**2  # Hz
+    delta_nu_chan_2 = c_um_s * delta_lambda2 / lambda_obs_2**2  # Hz
 
-    # Convert ν I_ν to I_ν by dividing by line width
-    I_nu_1_nW_Hz = I_i_1_nW / delta_nu_line_1  # nW/m²/sr/Hz
-    I_nu_2_nW_Hz = I_i_2_nW / delta_nu_line_2  # nW/m²/sr/Hz
+    # Convert ν I_ν to I_ν by dividing by CHANNEL width (not line width!)
+    I_nu_1_nW_Hz = I_i_1_nW / delta_nu_chan_1  # nW/m²/sr/Hz
+    I_nu_2_nW_Hz = I_i_2_nW / delta_nu_chan_2  # nW/m²/sr/Hz
 
     # Convert nW/m²/sr/Hz to MJy/sr
     nW_Hz_to_MJy = 1e11  # 10^-9 / 10^-26 × 10^6
