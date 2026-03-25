@@ -68,18 +68,55 @@ except ImportError:
 # SURVEY CONFIGURATION
 # ============================================================================
 
-# SPHEREx spectral channels
-# 64 channels spanning 0.75 to 3.82 μm, equally spaced in log frequency
-LAMBDA_MIN = 0.75  # μm
-LAMBDA_MAX = 3.82  # μm
-N_CHANNELS = 64
-N_BANDS = 4
-CHANNELS_PER_BAND = N_CHANNELS // N_BANDS  # 16 channels per band
+# SPHEREx 6-band configuration following Professor Pullen's specification
+# Upgraded from previous 4-band (64 channel) to full 6-band (92 channel) setup
+# Bands 5-6 have higher spectral resolution (R=110, R=130) than bands 1-4 (R=35-41)
+#
+# Reference: Professor Pullen's compute_limber_validity.py
+# Band edges (μm): [0.75, 1.10, 1.63, 2.42, 3.82, 4.42, 5.00]
+# Spectral resolution R per band: [41, 41, 41, 35, 110, 130]
 
-# Generate channel edges (log-spaced in frequency → log-spaced in wavelength)
-CHANNEL_EDGES = np.logspace(np.log10(LAMBDA_MIN), np.log10(LAMBDA_MAX), N_CHANNELS + 1)
-CHANNEL_CENTERS = 0.5 * (CHANNEL_EDGES[:-1] + CHANNEL_EDGES[1:])
-CHANNEL_WIDTHS = CHANNEL_EDGES[1:] - CHANNEL_EDGES[:-1]
+# Band boundaries
+LAMBDA_BAND_EDGES = np.array([0.75, 1.10, 1.63, 2.42, 3.82, 4.42, 5.00])  # μm
+N_BANDS = len(LAMBDA_BAND_EDGES) - 1  # 6 bands
+
+# Spectral resolution per band
+SPECTRAL_RESOLUTION_R = np.array([41, 41, 41, 35, 110, 130])
+
+# Compute channel structure following Professor Pullen's algorithm
+_dlamband = np.diff(LAMBDA_BAND_EDGES)
+_lamcen = 0.5 * (LAMBDA_BAND_EDGES[:-1] + LAMBDA_BAND_EDGES[1:])
+_dlamchan = _lamcen / SPECTRAL_RESOLUTION_R
+_nchan_per_band = np.floor(_dlamband / _dlamchan).astype(int)
+
+# Total number of channels across all 6 bands
+N_CHANNELS = int(np.sum(_nchan_per_band))
+
+# Generate channel boundaries
+_lamchan = np.array([LAMBDA_BAND_EDGES[0]])
+for i in range(N_BANDS):
+    _lamchan_band = np.linspace(
+        LAMBDA_BAND_EDGES[i] + _dlamband[i] / _nchan_per_band[i],
+        LAMBDA_BAND_EDGES[i + 1],
+        _nchan_per_band[i]
+    )
+    _lamchan = np.concatenate((_lamchan, _lamchan_band))
+
+# Channel edges, centers, and widths
+CHANNEL_EDGES = _lamchan  # Length: N_CHANNELS + 1
+CHANNEL_CENTERS = 0.5 * (_lamchan[:-1] + _lamchan[1:])  # Length: N_CHANNELS
+CHANNEL_WIDTHS = _lamchan[1:] - _lamchan[:-1]  # Length: N_CHANNELS
+
+# Load Limber validity array (computed by scripts/compute_limber_validity.py)
+# limber_min[i] = minimum ℓ where Limber approximation is valid for channel i
+try:
+    LIMBER_MIN = np.loadtxt('test_limber.txt').astype(int)
+    if len(LIMBER_MIN) != N_CHANNELS:
+        raise ValueError(f"Limber array length {len(LIMBER_MIN)} != N_CHANNELS {N_CHANNELS}")
+except (FileNotFoundError, ValueError) as e:
+    import warnings
+    warnings.warn(f"Could not load test_limber.txt: {e}. Using conservative limber_min=1000 for all channels.")
+    LIMBER_MIN = np.ones(N_CHANNELS, dtype=int) * 1000  # Conservative: force Bessel integral
 
 # Multipole bins
 # 8 bins spanning 50 < ℓ < 350 with approximately equal number of modes
