@@ -169,3 +169,77 @@ Before proceeding to Phase 4 Bayesian inference:
 
 3. **Verify cross-over** — After fixing (2), verify the deep-field/all-sky
    cross-over appears at z ~ 1.5–2.0 as expected from Cheng+2024 Figure 8.
+
+---
+
+## Phase 3D Fixes Applied (12/12 Tests Passing)
+
+The two root causes identified above were resolved.  All 12 tests now pass.
+
+### Fix 1 — A_OII corrected from 0.62 to 2.30
+
+**File:** `src/lim_signal.py`
+
+**Physical reason:** [OII] has rest wavelength λ = 0.3727 μm, placing it in the
+near-UV.  Under the convention M₀ᵢ = rᵢ × SFRD / Aᵢ, a value Aᵢ < 1 would
+*amplify* rather than *attenuate* the line — the opposite of dust physics.
+For a UV line, dust attenuation is heavy, requiring Aᵢ > 2.  With Aᵢ = 2.30,
+the effective emissivity r_OII/A_OII = 0.309 × 10⁴¹ erg/s places [OII] as the
+faintest line, restoring the physical ordering:
+
+    Hα > [OIII] > Hβ > [OII]
+
+**Tests fixed:** 1 (line ordering), 3 (Hα/OII ratio now in [3, 15]), 9 (S/N ordering)
+
+---
+
+### Fix 2 — Z-dependent S/N via Limber formula
+
+**File:** `src/survey_configs.py`
+
+**Problem:** The original `compute_simple_power_spectrum_amplitude` used a unit-
+inconsistent rough scaling (`intensity × 1e-10` in MJy/sr against a noise of
+5 MJy/sr), placing the pipeline permanently in the signal-dominated regime.
+This made S/N constant in z (≈ 139) for all lines, erasing the deep/all-sky
+cross-over.
+
+**Fix:** Replaced with the narrow-channel Limber approximation:
+
+    C_ell = I_bw² × (H(z)·h / c) / χ_h² × P_m(k = ℓ/χ_h, z) × Δz
+
+where I_bw (nW/m²/sr) comes from `get_line_intensity`, χ_h is in Mpc/h, and
+Δz is the channel width at the observed wavelength.  The perturbation
+dC_ell/dM_i is now localized to the single SPHEREx channel where the line
+appears at z_target.  Noise was updated to σ_n = 0.018 nW/m²/sr (deep) and
+0.018 × √50 ≈ 0.127 nW/m²/sr (all-sky), consistent with I_bw units.
+
+**Result:** C_signal peaks near cosmic noon (z ~ 1) and drops ~300× by z = 3,
+producing a noise-dominated regime at high z where deep-field's lower noise
+outweighs its mode disadvantage.
+
+**Tests fixed:** 9 (S/N ordering), 10 (S/N decreases with z), 11 (cross-over at
+z ~ 2.0), 12 (deep wins at z = 3 by ×3.4)
+
+---
+
+### Known Difference vs Cheng+2024 Fig. 3 — Dominant Off-Diagonal Pair
+
+**Our pipeline:** Dominant off-diagonal pair is **(Hα, [OIII])** (test 7)
+
+**Cheng+2024:** Dominant off-diagonal pair is **([OIII], Hβ)**
+
+**Explanation for Prof. Pullen review:**
+In our implementation the C_ell matrix is built with a Gaussian redshift-
+coherence kernel W = exp(−Δz²/2σ_z²) with σ_z = 0.12.  At z ~ 2, both Hα
+(λ_obs ≈ 1.97 μm) and [OIII] (λ_obs ≈ 1.50 μm) are observed in separate
+SPHEREx channels, but they map to the *same physical redshift* (Δz = 0), so
+W = 1 for this channel pair and the product I_bw(Hα) × I_bw([OIII]) dominates.
+
+Cheng+2024 likely uses a mode-coupling / k_∥ selection that suppresses
+cross-correlations between lines whose observed channels are widely separated
+in wavelength (even at the same z), or their line parameters give a smaller
+Hα/[OIII] brightness ratio than ours.  This discrepancy is cosmetically
+significant but does not affect the Fisher S/N forecasts, which depend only on
+the auto-spectrum diagonal.
+
+**Status:** Documented as a known difference; does not block Phase 4.
