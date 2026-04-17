@@ -6,7 +6,7 @@ Runs the full Cheng et al. (2024) Section 5–6 inference pipeline:
   1. Generate fiducial data covariances for 8 redshift bins
   2. Run Newton-Raphson optimization to find MAP parameters
   3. Compute Fisher information matrix at MAP
-  4. Report 1-sigma constraints and S/N per parameter
+  4. Report S/N table at z=1,1.5,2,3 and 10-sigma redshift reach per line
   5. Produce Figure 6 analog: recovered M_i(z) with 1-sigma bands
 
 Usage
@@ -15,8 +15,8 @@ Usage
 
 Outputs
 -------
-    scripts/phase4_results.npz     — Fisher matrix, constraints, MAP estimates
-    scripts/figure6_Mi_recovery.png — M_i(z) recovery plot (if matplotlib available)
+    scripts/phase4_results.npz       — Fisher matrix, constraints, MAP estimates
+    figures/phase4_figure6.png       — M_i(z) recovery plot (if matplotlib available)
 
 References
 ----------
@@ -43,7 +43,7 @@ from fisher_posterior import (
     compute_fisher_matrix, compute_parameter_constraints,
     compute_snr_per_parameter, summarize_constraints, compute_line_constraints,
 )
-from survey_configs import SurveyConfig
+from survey_configs import SurveyConfig, compute_SNR_vs_redshift
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -208,6 +208,58 @@ def make_figure6(recovered, fiducial, output_path):
     print(f"\nFigure 6 saved: {output_path}")
 
 
+def print_snr_table(survey_config):
+    """
+    Print S/N table for all four lines at z = 1.0, 1.5, 2.0, 3.0.
+
+    Uses the Fisher-based compute_SNR_vs_redshift from survey_configs.
+    """
+    z_report = np.array([1.0, 1.5, 2.0, 3.0])
+    ell_bins = np.array([[50, 150], [150, 300], [300, 500]])
+    snr_dict = compute_SNR_vs_redshift(survey_config, z_bins=z_report, ell_bins=ell_bins)
+
+    print("\n" + "=" * 60)
+    print("S/N Summary Table — Deep Field")
+    print(f"{'Line':<10}" + "".join(f"  z={z:.1f}" for z in z_report))
+    print("-" * 60)
+    for line in EMISSION_LINES:
+        row = f"{line:<10}"
+        for snr_val in snr_dict[line]:
+            row += f"  {snr_val:>6.1f}"
+        print(row)
+    print("=" * 60)
+    return snr_dict
+
+
+def print_10sigma_reach(survey_config):
+    """
+    For each line, find the highest redshift where S/N >= 10.
+
+    Scans z = 0.5..5.0 in steps of 0.1.
+    """
+    z_scan = np.arange(0.5, 5.1, 0.1)
+    ell_bins = np.array([[50, 150], [150, 300], [300, 500]])
+    snr_dict = compute_SNR_vs_redshift(survey_config, z_bins=z_scan, ell_bins=ell_bins)
+
+    print("\n" + "=" * 60)
+    print("10-sigma Redshift Reach — Deep Field")
+    print("-" * 60)
+    reaches = {}
+    for line in EMISSION_LINES:
+        snr_arr = snr_dict[line]
+        above_10 = z_scan[snr_arr >= 10.0]
+        if len(above_10) > 0:
+            reach = above_10[-1]
+            print(f"  {line:<10}: z_10sigma = {reach:.1f}  "
+                  f"(S/N at z={reach:.1f}: {snr_arr[z_scan == reach][0]:.1f})")
+        else:
+            reach = 0.0
+            print(f"  {line:<10}: S/N < 10 at all z")
+        reaches[line] = reach
+    print("=" * 60)
+    return reaches
+
+
 def save_results(theta_map, F, sigma, result, output_path):
     """Save key outputs to .npz file."""
     np.savez(
@@ -264,10 +316,16 @@ def main():
     fiducial = compute_fiducial_Mi()
 
     if not args.no_plot:
-        fig_path = os.path.join(os.path.dirname(__file__), 'figure6_Mi_recovery.png')
+        fig_dir = os.path.join(os.path.dirname(__file__), '..', 'figures')
+        os.makedirs(fig_dir, exist_ok=True)
+        fig_path = os.path.join(fig_dir, 'phase4_figure6.png')
         make_figure6(recovered, fiducial, fig_path)
 
-    # Step 5: save results
+    # Step 5: S/N table and 10-sigma reach
+    print_snr_table(SURVEY)
+    print_10sigma_reach(SURVEY)
+
+    # Step 6: save results
     results_path = os.path.join(os.path.dirname(__file__), 'phase4_results.npz')
     save_results(theta_map, F, sigma, result, results_path)
 
