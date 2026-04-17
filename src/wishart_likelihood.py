@@ -106,8 +106,11 @@ def build_signal_covariance(theta_flat, z, ell_center=100.0):
             cij_from_mij(FIDUCIAL_MIJ[line]), [z]
         )[0])
         C_fid = compute_signal_power_spectrum(z, line, ell_center)
-        if M_i_fid > 0:
-            C_ell = C_fid * (M_i_z / M_i_fid) ** 2
+        if M_i_fid > 0 and C_fid > 0:
+            # Use log-domain ratio to avoid overflow: C = C_fid * exp(2*log(ratio))
+            log_ratio = np.log(M_i_z / M_i_fid)
+            log_ratio = np.clip(log_ratio, -50.0, 50.0)  # prevent overflow
+            C_ell = C_fid * np.exp(2.0 * log_ratio)
         else:
             C_ell = 0.0
 
