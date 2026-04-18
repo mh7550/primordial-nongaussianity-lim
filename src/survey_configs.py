@@ -22,17 +22,19 @@ try:
         get_line_luminosity_density,
         get_halo_bias_simple,
         get_sfrd,
+        get_line_intensity,
         LINE_PROPERTIES
     )
-    from .cosmology import get_hubble, get_power_spectrum, get_comoving_distance
+    from .cosmology import get_hubble, get_power_spectrum, get_comoving_distance, h
 except ImportError:
     from lim_signal import (
         get_line_luminosity_density,
         get_halo_bias_simple,
         get_sfrd,
+        get_line_intensity,
         LINE_PROPERTIES
     )
-    from cosmology import get_hubble, get_power_spectrum, get_comoving_distance
+    from cosmology import get_hubble, get_power_spectrum, get_comoving_distance, h
 
 
 # SPHEREx 6-band channel configuration (92 channels total)
@@ -118,14 +120,14 @@ class SurveyConfig:
         """
         if name == 'deep_field':
             f_sky = 0.0048
-            # Use simple noise model: 5 MJy/sr baseline
-            sigma_n = np.full(N_CHANNELS, 5.0)
+            # Deep-field noise in nW/m²/sr (consistent with get_line_intensity units)
+            sigma_n = np.full(N_CHANNELS, 0.018)
             return SurveyConfig('deep_field', f_sky, sigma_n)
 
         elif name == 'all_sky':
             f_sky = 0.75
-            # All-sky noise is sqrt(50)× higher
-            sigma_n_deep = np.full(N_CHANNELS, 5.0)
+            # All-sky noise variance is 50× higher than deep (sqrt(50)× in amplitude)
+            sigma_n_deep = np.full(N_CHANNELS, 0.018)
             sigma_n = sigma_n_deep * np.sqrt(50.0)
             return SurveyConfig('all_sky', f_sky, sigma_n)
 
@@ -133,69 +135,87 @@ class SurveyConfig:
             raise ValueError(f"Unknown config: {name}")
 
 
-def compute_simple_power_spectrum_amplitude(z, line):
+def compute_signal_power_spectrum(z, line, ell_center=100.0):
     """
-    Simplified power spectrum amplitude for a line at redshift z.
+    Limber-approximated angular power spectrum C_ell for a line at redshift z.
 
-    Returns characteristic amplitude in (MJy/sr)² × (Mpc/h)³
+    Uses the narrow-channel Limber formula:
+        C_ell = I_bw² × (H_z_h/c) / chi_h² × P_m(k=ell/chi_h, z) × delta_z
+
+    Parameters
+    ----------
+    z : float
+        Redshift
+    line : str
+        Emission line name
+    ell_center : float
+        Central multipole for k_limber = ell/chi
+
+    Returns
+    -------
+    C_signal : float
+        Angular power spectrum amplitude in (nW/m²/sr)²
     """
-    # Get bias-weighted luminosity density
-    M0_i = get_line_luminosity_density(z, line=line)
-    b_i = get_halo_bias_simple(z)
-    M_i = b_i * M0_i
+    _c_light = 299792.458  # km/s
 
-    # Convert to intensity (simplified)
-    H_z = get_hubble(z)
-    c_light = 299792.458  # km/s
-    intensity = M_i / (H_z * (1.0 + z)**3)  # proportional to signal
+    I_bw = get_line_intensity(z, line=line, return_bias_weighted=True)  # nW/m²/sr
+    chi = get_comoving_distance(z)       # Mpc
+    chi_h = max(chi * h, 1.0)            # Mpc/h
+    H_z = get_hubble(z)                  # km/s/Mpc
+    H_z_h = H_z * h                      # km/s/(Mpc/h)
 
-    # Simplified conversion to MJy/sr (order of magnitude)
-    signal_MJy = intensity * 1e-10  # rough scaling
+    k_limber = (ell_center + 0.5) / chi_h   # h/Mpc
+    k_limber = max(k_limber, 1e-4)
+    P_mat = get_power_spectrum(k_limber, z)  # (Mpc/h)³
 
-    # Power spectrum amplitude ~ signal²
-    return signal_MJy**2 * 1e4
+    # Channel width in redshift at this line's observed wavelength
+    lambda_rest = LINE_PROPERTIES[line]['lambda_rest']
+    lambda_obs = lambda_rest * (1.0 + z)
+    i_chan = int(np.argmin(np.abs(CHANNEL_CENTERS - lambda_obs)))
+    delta_z = CHANNEL_WIDTHS[i_chan] / lambda_rest
+
+    return I_bw**2 * (H_z_h / _c_light) / chi_h**2 * P_mat * delta_z
 
 
 def compute_dCell_dMi(line, z_target, ell_bins, delta=0.02):
     """
-    Compute derivative dC_ell/dM_i using centered finite differences.
+    Compute derivative dC_ell/dM_i, localized to the single SPHEREx channel
+    where this line appears at z_target.
 
     Parameters
     ----------
     line : str
         Emission line name
     z_target : float
-        Target redshift for perturbation
+        Target redshift
     ell_bins : array_like, shape (n_bins, 2)
         Array of (ell_min, ell_max) pairs
     delta : float
-        Fractional perturbation (default: 0.02 = 2%)
+        Unused (kept for API compatibility; derivative is analytical)
 
     Returns
     -------
     dC_dMi : ndarray, shape (n_bins, N_CHANNELS, N_CHANNELS)
-        Derivative of C_ell matrix
+        Derivative of C_ell matrix (nonzero only at the target channel diagonal)
     M_i : float
         Bias-weighted luminosity density at z_target
     """
     n_bins = len(ell_bins)
-
-    # Get M_i at target redshift
     M_i = get_line_luminosity_density(z_target, line=line) * get_halo_bias_simple(z_target)
-
-    # Simplified C_ell derivative (diagonal approximation)
     dC_dMi = np.zeros((n_bins, N_CHANNELS, N_CHANNELS))
 
-    # Compute power spectrum amplitude with and without perturbation
-    P_plus = compute_simple_power_spectrum_amplitude(z_target, line) * (1 + delta)
-    P_minus = compute_simple_power_spectrum_amplitude(z_target, line) * (1 - delta)
+    # Identify the single channel where this line appears at z_target
+    lambda_obs = LINE_PROPERTIES[line]['lambda_rest'] * (1.0 + z_target)
+    if lambda_obs < CHANNEL_EDGES[0] or lambda_obs > CHANNEL_EDGES[-1]:
+        return dC_dMi, M_i
+    i_chan = int(np.argmin(np.abs(CHANNEL_CENTERS - lambda_obs)))
 
-    dP_dM = (P_plus - P_minus) / (2 * delta * M_i)
-
-    # Fill diagonal (auto-spectrum for each channel)
-    for i_bin in range(n_bins):
-        for i_chan in range(N_CHANNELS):
-            dC_dMi[i_bin, i_chan, i_chan] = dP_dM
+    # Analytical derivative: C_signal ∝ I_bw² ∝ M_i², so dC/dM_i = 2C/M_i
+    if M_i > 0:
+        for i_bin in range(n_bins):
+            ell_center = 0.5 * (ell_bins[i_bin, 0] + ell_bins[i_bin, 1])
+            C_sig = compute_signal_power_spectrum(z_target, line, ell_center)
+            dC_dMi[i_bin, i_chan, i_chan] = 2.0 * C_sig / M_i
 
     return dC_dMi, M_i
 
@@ -204,7 +224,10 @@ def compute_fisher_matrix_diagonal(line, z_target, survey_config, ell_bins, delt
     """
     Compute Fisher matrix diagonal F_ii(z) for bias-weighted luminosity.
 
-    F_ii = (1/2) × sum_ell n_ell × Tr[C^{-1} dC C^{-1} dC]
+    F_ii = (1/2) × sum_ell n_ell × (dC_ell/dM_i)² / (C_signal + C_n)²
+
+    The perturbation is localized to the single SPHEREx channel where the line
+    appears at z_target.  C_signal is computed via the Limber approximation.
 
     Parameters
     ----------
@@ -217,7 +240,7 @@ def compute_fisher_matrix_diagonal(line, z_target, survey_config, ell_bins, delt
     ell_bins : array_like, shape (n_bins, 2)
         Multipole bins
     delta : float
-        Perturbation for derivative
+        Unused (kept for API compatibility)
 
     Returns
     -------
@@ -226,38 +249,28 @@ def compute_fisher_matrix_diagonal(line, z_target, survey_config, ell_bins, delt
     M_i : float
         Bias-weighted luminosity density
     """
-    n_bins = len(ell_bins)
+    M_i = get_line_luminosity_density(z_target, line=line) * get_halo_bias_simple(z_target)
 
-    # Get derivative
-    dC_dMi, M_i = compute_dCell_dMi(line, z_target, ell_bins, delta)
+    # Identify target channel
+    lambda_obs = LINE_PROPERTIES[line]['lambda_rest'] * (1.0 + z_target)
+    if lambda_obs < CHANNEL_EDGES[0] or lambda_obs > CHANNEL_EDGES[-1]:
+        return 0.0, M_i
+    i_chan = int(np.argmin(np.abs(CHANNEL_CENTERS - lambda_obs)))
 
-    # Build total covariance (signal + noise)
-    # Simplified: use power spectrum amplitude on diagonal + noise
-    C_total = np.zeros((n_bins, N_CHANNELS, N_CHANNELS))
+    if M_i <= 0:
+        return 0.0, M_i
 
-    P_signal = compute_simple_power_spectrum_amplitude(z_target, line)
-
-    for i_bin in range(n_bins):
-        for i_chan in range(N_CHANNELS):
-            C_total[i_bin, i_chan, i_chan] = P_signal + survey_config.C_n[i_chan]
-
-    # Compute Fisher
     F_ii = 0.0
-
-    for i_bin in range(n_bins):
-        ell_min, ell_max = ell_bins[i_bin]
+    for ell_min, ell_max in ell_bins:
         n_ell = survey_config.n_ell(ell_min, ell_max)
+        ell_center = 0.5 * (ell_min + ell_max)
 
-        C = C_total[i_bin]
-        dC = dC_dMi[i_bin]
+        P_sig = compute_signal_power_spectrum(z_target, line, ell_center)
+        C_total = P_sig + survey_config.C_n[i_chan]
 
-        # C^{-1} × dC using solve
-        C_inv_dC = np.linalg.solve(C, dC)
-
-        # Tr[(C^{-1} dC)^T (C^{-1} dC)] = sum_ij (C^{-1} dC)_ij²
-        trace_term = np.sum(C_inv_dC**2)
-
-        F_ii += 0.5 * n_ell * trace_term
+        if C_total > 0:
+            # dC/dM_i = 2*P_sig/M_i  →  (dC/C)² = (2*P_sig/(M_i*C))²
+            F_ii += 0.5 * n_ell * (2.0 * P_sig / (M_i * C_total))**2
 
     return F_ii, M_i
 

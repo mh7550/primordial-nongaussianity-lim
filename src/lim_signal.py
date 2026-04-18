@@ -64,7 +64,7 @@ LINE_PROPERTIES = {
     'OII': {
         'lambda_rest': 0.3727,  # μm
         'r_i': 0.71e41,  # erg/s per (M_sun/yr)
-        'A_i': 0.62,  # dust extinction factor
+        'A_i': 2.30,  # dust extinction factor (corrected from 0.62)
     },
 }
 
