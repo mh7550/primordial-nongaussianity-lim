@@ -26,7 +26,7 @@
 \date{\today}
 
 \begin{abstract}
-The amplitude of local primordial non-Gaussianity $f_{\rm NL}^{\rm local}$ is a fingerprint of inflationary physics: sub-unity sensitivity discriminates single-field models, which predict $|f_{\rm NL}^{\rm local}| \ll 1$, from broad classes of multi-field scenarios.  We construct a complete forward pipeline that propagates a $\Lambda$CDM cosmology through the line-intensity-mapping (LIM) signal model into the full $92\times 92$ angular power spectrum matrix $C_\ell^{\nu\nu'}$, incorporating the full cross-power matrix, the wavelength-dependent v28 noise model, and realistic galactic-plane masking ($f_{\rm sky}=0.60$).  We find $\sigma(f_{\rm NL}^{\rm local}) = 0.71$, a factor of $7.2$ improvement over the Planck 2018 limit of $5.1$.  The multi-tracer auto-spectrum already provides a $2.8\times$ improvement over Planck; the off-diagonal cross-power contributes a further factor of 1.25; and modes with $\ell < 50$ carry roughly $40\%$ of the constraining power, confirming that the $k^{-2}$ scale-dependent bias dominates the signal.  SPHEREx therefore crosses the $\sigma(f_{\rm NL}^{\rm local}) = 1$ threshold, entering the regime that discriminates between broad classes of inflationary models.
+The amplitude of local primordial non-Gaussianity $f_{\rm NL}^{\rm local}$ is a fingerprint of inflationary physics: sub-unity sensitivity discriminates single-field models, which predict $|f_{\rm NL}^{\rm local}| \ll 1$, from broad classes of multi-field scenarios.  We construct a complete forward pipeline that propagates a $\Lambda$CDM cosmology through the line-intensity-mapping (LIM) signal model into the full $92\times 92$ angular power spectrum matrix $C_\ell^{\nu\nu'}$, incorporating the full cross-power matrix, the wavelength-dependent v28 noise model, and realistic galactic-plane masking ($f_{\rm sky}=0.60$).  We find $\sigma(f_{\rm NL}^{\rm local}) = 0.71$, a factor of $7.2$ improvement over the Planck 2018 limit of $5.1$.  The single-tracer estimator gives a 2.8$\times$ improvement over Planck; the multi-tracer auto-spectrum tightens this to 5.7$\times$ over Planck; the full cross-power matrix contributes a further factor of 1.25 to yield the final 7.2$\times$ improvement.  Modes with $\ell < 50$ carry roughly $40\%$ of the constraining power, confirming that the $k^{-2}$ scale-dependent bias dominates the signal.  SPHEREx therefore crosses the $\sigma(f_{\rm NL}^{\rm local}) = 1$ threshold, entering the regime that discriminates between broad classes of inflationary models.
 \end{abstract}
 
 \maketitle
@@ -45,11 +45,13 @@ In this paper we present a forecast for $f_{\rm NL}^{\rm local}$ from SPHEREx LI
 \begin{figure*}[t]
 \centering
 \includegraphics[width=\textwidth]{figure_1_joint_summary.pdf}
-\caption{Joint forecast summary.  (a) $\sigma(f_{\rm NL}^{\rm local})$ across estimators---Planck CMB ($5.1$), SPHEREx single-tracer ($1.8$), SPHEREx multi-tracer with auto-spectrum only ($0.89$), and the full cross-power Fisher matrix ($0.71$).  The $\sigma=1$ multi-field threshold is crossed.  (b) Realistic H$\alpha$ S/N as a function of redshift under the v28 noise model.  (c) Deep-field vs.\ all-sky comparison showing the $125\times$ mode advantage that makes the all-sky survey decisively better for $f_{\rm NL}^{\rm local}$.  (d) Per-component accounting of the methodological changes implemented relative to a constant-noise, diagonal-only baseline.}
+\caption{Joint forecast summary.  (a) $\sigma(f_{\rm NL}^{\rm local})$ across estimators---Planck CMB ($5.1$), SPHEREx single-tracer ($1.8$), SPHEREx multi-tracer with auto-spectrum only ($0.89$), and the full cross-power Fisher matrix ($0.71$).  The $\sigma=1$ multi-field threshold is crossed.  (b) Realistic H$\alpha$ S/N as a function of redshift under the v28 noise model.  (c) Deep-field vs.\ all-sky comparison showing the $125\times$ mode advantage that makes the all-sky survey decisively better for $f_{\rm NL}^{\rm local}$.  (d) Per-line contributions showing the methodological changes implemented relative to a constant-noise, diagonal-only baseline.}
 \label{fig:joint}
 \end{figure*}
 
-The remainder of the paper is organised as follows.  Sec.~\ref{sec:theory} reviews the scale-dependent bias, the LIM angular power spectrum, and the multi-tracer Fisher matrix.  Sec.~\ref{sec:pipeline} describes the pipeline implementation, organised into the five phases that build from the cosmological kernel to the realistic Fisher forecast.  Sec.~\ref{sec:results} presents the headline result and its decomposition.  Sec.~\ref{sec:discussion} compares to previous work and identifies open systematics.  Sec.~\ref{sec:conclusions} concludes.
+We argue the result in three steps: first, that the LIM angular power spectrum carries the same scale-dependent bias signal as discrete galaxy clustering (Sec.~\ref{sec:theory:cell}); second, that the 92 SPHEREx channels constitute a multi-tracer dataset in the Seljak sense because different channels observe different emission lines at the same physical redshift (Sec.~\ref{sec:theory:fisher}); and third, that this multi-tracer structure, combined with the realistic v28 noise model and galactic-plane masking, yields a forecast that crosses the $\sigma=1$ multi-field threshold.
+
+The remainder of the paper is organised as follows.  Sec.~\ref{sec:theory} reviews the scale-dependent bias, the LIM angular power spectrum, and the multi-tracer Fisher matrix.  Sec.~\ref{sec:pipeline} describes the pipeline implementation, organised into the five steps that build from the cosmological kernel to the realistic Fisher forecast.  Sec.~\ref{sec:results} presents the headline result and its decomposition.  Sec.~\ref{sec:discussion} compares to previous work and identifies open systematics.  Sec.~\ref{sec:conclusions} concludes.
 
 \section{Theoretical Framework}
 \label{sec:theory}
@@ -62,11 +64,12 @@ Local primordial non-Gaussianity correlates short-wavelength power with long-wav
 b(k,z) = b_1(z) + \Delta b(k,z),
 \label{eq:bias-total}
 \end{equation}
-with
-\begin{equation}
-\Delta b(k,z) = 3 f_{\rm NL}^{\rm local}\,\bigl[b_1(z)-1\bigr]\,\delta_c \,\frac{\Omega_m H_0^2}{c^2\, k^2\, T(k)\, D(z)},
+The physical origin of the correction $\Delta b$ is the coupling between long-wavelength curvature perturbations and the local short-wavelength power that determines tracer formation, which for local-type non-Gaussianity produces the $k^{-2}$ scaling on large scales \citep{Dalal2008}.  Explicitly,
+\begin{align}
+\Delta b(k,z) = 3 f_{\rm NL}^{\rm local}\,\bigl[b_1(z)-1\bigr]\,\delta_c \nonumber \\
+\times \frac{\Omega_m H_0^2}{c^2\, k^2\, T(k)\, D(z)}.
 \label{eq:bias-delta}
-\end{equation}
+\end{align}
 where $\delta_c \simeq 1.686$ is the critical collapse threshold, $T(k)$ is the matter transfer function normalized to unity on large scales, and $D(z)$ is the linear growth factor normalized to $D(0)=1$.  The $k^{-2}T(k)^{-1}$ factor causes the primordial-non-Gaussianity signal to grow on large scales: the bulk of the constraining power therefore lives at $k \lesssim 0.02\,h\,{\rm Mpc}^{-1}$, i.e.\ at multipoles $\ell$ smaller than a few tens at SPHEREx redshifts.
 
 \subsection{LIM intensity and angular power spectrum}
@@ -96,12 +99,12 @@ F(f_{\rm NL}^{\rm local}) &= \sum_\ell \frac{2\ell+1}{2}\, f_{\rm sky}\, \nonumb
 &\quad \times {\rm Tr}\!\left[\Sigma^{-1}_\ell\, \frac{\partial \Sigma_\ell}{\partial f_{\rm NL}^{\rm local}}\, \Sigma^{-1}_\ell\, \frac{\partial \Sigma_\ell}{\partial f_{\rm NL}^{\rm local}}\right],
 \label{eq:fisher}
 \end{align}
-where $\Sigma_\ell = C_\ell^{\nu\nu'} + N_\ell^{\nu\nu'}$ is the total $92\times 92$ covariance, with $N_\ell^{\nu\nu'} = \delta_{\nu\nu'}\sigma_n^2(\nu)\,\Omega_{\rm pix}$ the diagonal instrument-noise contribution.  The diagonal-only approximation drops the $i\ne j$ entries of $\Sigma_\ell$ and reduces Eq.~(\ref{eq:fisher}) to the sum of $N$ single-tracer auto-spectrum Fisher matrices.  The full cross-power matrix instead exploits the correlation between any two channels that happen to observe different emission lines at the same physical redshift, the LIM analogue of the multi-tracer cosmic-variance cancellation of \citet{Seljak2009}.
+where $\Sigma_\ell = C_\ell^{\nu\nu'} + N_\ell^{\nu\nu'}$ is the total $92\times 92$ covariance, with $N_\ell^{\nu\nu'} = \delta_{\nu\nu'}\sigma_n^2(\nu)\,\Omega_{\rm pix}$ the diagonal instrument-noise contribution.  Two channels $\nu$ and $\nu'$ that observe different emission lines $i$ and $j$ at the same physical redshift sample the same underlying matter density field, and therefore have correlated intensity fluctuations. These off-diagonal correlations are the source of the multi-tracer advantage, because they allow the cosmic variance contribution to $f_{\rm NL}^{\rm local}$---which is the same for all tracers at fixed $z$---to partially cancel in cross-correlations \citep{Seljak2009}.  The diagonal-only approximation drops the $i\ne j$ entries of $\Sigma_\ell$ and reduces Eq.~(\ref{eq:fisher}) to the sum of $N$ single-tracer auto-spectrum Fisher matrices.  The full cross-power matrix instead exploits the correlation between any two channels that happen to observe different emission lines at the same physical redshift, the LIM analogue of the multi-tracer cosmic-variance cancellation of \citet{Seljak2009}.
 
 \section{Pipeline Implementation}
 \label{sec:pipeline}
 
-The forecast is the output of a five-phase pipeline.  We summarize each phase below; each was validated against an independent reference before being chained into the next.
+The forecast is the output of a five-step pipeline.  We summarize each step below; each was validated against an independent reference before being chained into the next.
 
 \subsection{Background cosmology}
 \label{sec:pipeline:cosmo}
@@ -133,14 +136,14 @@ Although the headline result is a Fisher forecast, the pipeline also includes a 
 \subsection{Realistic Fisher forecast}
 \label{sec:pipeline:realistic}
 
-The final phase upgrades the Fisher forecast in three respects.  First, the constant-noise approximation $\sigma_n = 0.018\,{\rm nW\,m^{-2}\,sr^{-1}}$ (deep-field) used in earlier work is replaced by the wavelength-dependent $\sigma_n(\lambda)$ tabulated by the SPHEREx collaboration in their v28 public surface-brightness products \citep{Dore2014}.  The corrected noise model (Fig.~\ref{fig:noise}) is up to $200\times$ higher than the constant approximation at the blue edge of the spectrograph and a factor of $\sim 3$ higher at the red edge.  Second, the sky fraction is set to $f_{\rm sky} = 0.60$ to account for the galactic-plane mask that any high-latitude LIM analysis will adopt in practice; this is a $20\%$ reduction relative to the $0.75$ value sometimes adopted in optimistic forecasts.  Third, the diagonal Fisher matrix is generalized to the full $92\times 92$ trace formula of Eq.~(\ref{eq:fisher}), with $\Sigma_\ell$ inverted by a Cholesky-based solver at each multipole.
+The final step upgrades the Fisher forecast in three respects.  First, the constant-noise approximation $\sigma_n = 0.018\,{\rm nW\,m^{-2}\,sr^{-1}}$ (deep-field) used in earlier work is replaced by the wavelength-dependent $\sigma_n(\lambda)$ tabulated by the SPHEREx collaboration in their v28 public surface-brightness products \citep{Dore2014}.  The corrected noise model (Fig.~\ref{fig:noise}) is up to $200\times$ higher than the constant approximation at the blue edge of the spectrograph and a factor of $\sim 3$ higher at the red edge.  Second, the sky fraction is set to $f_{\rm sky} = 0.60$ to account for the galactic-plane mask that any high-latitude LIM analysis will adopt in practice; this is a $20\%$ reduction relative to the $0.75$ value sometimes adopted in optimistic forecasts.  Third, the diagonal Fisher matrix is generalized to the full $92\times 92$ trace formula of Eq.~(\ref{eq:fisher}), with $\Sigma_\ell$ inverted by a Cholesky-based solver at each multipole.
 
-\begin{figure}[t]
+\begin{figure*}[t]
 \centering
 \includegraphics[width=\columnwidth]{figure_3_noise_model.pdf}
-\caption{SPHEREx v28 wavelength-dependent noise model.  Left: noise $\sigma_n(\lambda)$ for the all-sky (red) and deep-field (blue) surveys, with the previous constant approximations as dashed lines.  Both configurations show a sensitivity optimum near $\lambda = 3.5\,\mu{\rm m}$ and a sharp degradation in band 6.  Right: ratio of v28 noise to the old constant value across wavelength, showing that the constant approximation was optimistic by factors of $30$--$200\times$ depending on wavelength.  The H$\alpha$ $10\sigma$ reach moves from $z \simeq 2.6$ (previous, optimistic) to $z \simeq 1.3$ (realistic).}
+\caption{SPHEREx v28 wavelength-dependent noise model.  Left: noise $\sigma_n(\lambda)$ for the all-sky (red) and deep-field (blue) surveys, with the previous constant approximations as dashed lines, with band boundaries marked.  Both configurations show a sensitivity optimum near $\lambda = 3.5\,\mu{\rm m}$ and a sharp degradation in band 6.  Right: ratio of v28 noise to the old constant value across wavelength, showing that the constant approximation was optimistic by factors of $30$--$200\times$ depending on wavelength.  The H$\alpha$ $10\sigma$ reach moves from $z \simeq 2.6$ (previous, optimistic) to $z \simeq 1.3$ (realistic).}
 \label{fig:noise}
-\end{figure}
+\end{figure*}
 
 \section{Results}
 \label{sec:results}
@@ -161,16 +164,16 @@ This represents a factor of $7.2$ improvement over the Planck 2018 bound \citep{
 The chain of improvements relative to Planck is, in order:
 \begin{itemize}
 \item Planck CMB \citep{Planck2020PNG}: $\sigma(f_{\rm NL}^{\rm local}) = 5.1$.
-\item SPHEREx single-tracer (best single line, $\ell_{\rm min}=2$, $f_{\rm sky}=0.60$): $\sigma(f_{\rm NL}^{\rm local}) = 1.8$, a factor of $2.8$ over Planck.
-\item SPHEREx multi-tracer, diagonal-only Fisher: $\sigma(f_{\rm NL}^{\rm local}) = 0.89$, a further factor of 2.0 over the single-tracer case.
-\item SPHEREx multi-tracer, full cross-power: $\sigma(f_{\rm NL}^{\rm local}) = 0.71$, a further factor of 1.25 improvement.
+\item SPHEREx single-tracer (best single line, $\ell_{\rm min}=2$, $f_{\rm sky}=0.60$): $\sigma(f_{\rm NL}^{\rm local}) = 1.8$, a factor of $2.8$ over Planck.  This factor reflects the longer lever arm in $k$ provided by the 3D large-scale-structure measurement compared to the 2D CMB projection.
+\item SPHEREx multi-tracer, diagonal-only Fisher: $\sigma(f_{\rm NL}^{\rm local}) = 0.89$, a further factor of 2.0 over the single-tracer case.  This factor reflects the four-line averaging, with the gain scaled by the relative S/N of each line at its corresponding redshift.
+\item SPHEREx multi-tracer, full cross-power: $\sigma(f_{\rm NL}^{\rm local}) = 0.71$, a further factor of 1.25 improvement.  This factor reflects the cosmic-variance cancellation between channel pairs observing different emission lines at the same physical redshift, of which H$\alpha\times$[O\,III] is the dominant contributor.
 \end{itemize}
 The cross-power contribution is at the lower end of the typical $20$--$40\%$ range observed in galaxy multi-tracer forecasts \citep{Seljak2009}, which we attribute below to the localised structure of the off-diagonal LIM covariance.
 
 \subsection{Where the constraining power lives}
 \label{sec:results:ellmin}
 
-The $k^{-2}$ scale-dependent bias of Eq.~(\ref{eq:bias-delta}) concentrates the $f_{\rm NL}^{\rm local}$ signal at large angular scales.  We quantify this by repeating the Fisher analysis with successive minimum multipoles $\ell_{\rm min} \in \{2,10,20,30,40,50\}$ and tracking the constraint.  Going from $\ell_{\rm min}=2$ to $\ell_{\rm min}=50$ degrades $\sigma(f_{\rm NL}^{\rm local})$ by roughly $40\%$, indicating that the modes with $\ell < 50$ carry $40\%$ of the constraining power.  The practical implication is that any foreground that contaminates $\ell < 20$---chromatic instrument systematics, large-angle galactic-plane residuals, or zodiacal emission---will degrade the headline constraint linearly with the multipole range it removes.  Controlling these foregrounds at the percent level on $\ell < 20$ is therefore a hard requirement for an actual SPHEREx $f_{\rm NL}^{\rm local}$ measurement, not a refinement.
+The $k^{-2}$ scale-dependent bias of Eq.~(\ref{eq:bias-delta}) concentrates the $f_{\rm NL}^{\rm local}$ signal at large angular scales.  We quantify this by repeating the Fisher analysis with successive minimum multipoles $\ell_{\rm min} \in \{2,10,20,30,40,50\}$ and tracking the constraint.  Going from $\ell_{\rm min}=2$ to $\ell_{\rm min}=50$ degrades $\sigma(f_{\rm NL}^{\rm local})$ by roughly $40\%$, indicating that the modes with $\ell < 50$ carry $40\%$ of the constraining power.  This is consistent with the $k^{-2}$ scale-dependent bias of Eq.~(\ref{eq:bias-delta}): the Fisher integrand $(\partial C_\ell / \partial f_{\rm NL}^{\rm local})^2 / C_\ell^{\rm tot}$ peaks at the largest scales, with the bulk contribution from $\ell \sim 10$--$50$ at SPHEREx's median survey redshift.  The practical implication is that any foreground that contaminates $\ell < 20$---chromatic instrument systematics, large-angle galactic-plane residuals, or zodiacal emission---will degrade the headline constraint linearly with the multipole range it removes.  Controlling these foregrounds at the percent level on $\ell < 20$ is therefore a hard requirement for an actual SPHEREx $f_{\rm NL}^{\rm local}$ measurement, not a refinement.
 
 \subsection{Cross-power contribution}
 \label{sec:results:crosspower}
@@ -180,7 +183,7 @@ The improvement from the diagonal-only Fisher matrix ($0.89$) to the full $92\ti
 \begin{figure*}[t]
 \centering
 \includegraphics[width=0.85\textwidth]{figure_4_cross_power.pdf}
-\caption{Full $92\times 92$ cross-power Fisher matrix compared to the diagonal-only approximation.  Top: visualization of $\Sigma_\ell$ at a representative multipole---diagonal-only (left) and full matrix (right), showing concentrated off-diagonal weight at line pairs observed at matched physical redshifts.  Bottom: the resulting $\sigma(f_{\rm NL}^{\rm local})$ improves from $0.89$ to $0.71$, a $20\%$ gain consistent with the \citet{Seljak2009} cosmic-variance cancellation operating at the lower end of its typical $20$--$40\%$ range due to the localised structure of the off-diagonal terms.}
+\caption{Full $92\times 92$ cross-power Fisher matrix compared to the diagonal-only approximation.  Top: visualization of $\Sigma_\ell$ at a representative multipole---diagonal-only (left) and full matrix (right), showing concentrated off-diagonal weight at line pairs observed at matched physical redshifts with band boundaries marked.  Bottom: the resulting $\sigma(f_{\rm NL}^{\rm local})$ improves from $0.89$ to $0.71$, a $20\%$ gain consistent with the \citet{Seljak2009} cosmic-variance cancellation operating at the lower end of its typical $20$--$40\%$ range due to the localised structure of the off-diagonal terms.}
 \label{fig:crosspower}
 \end{figure*}
 
@@ -193,7 +196,7 @@ The closest prior forecasts are those of \citet{Cheng2024}, who present a detail
 
 \subsection{Dominant cross-power pair}
 
-A point on which our forecast differs from the published comparison is the identity of the dominant off-diagonal line pair.  We find the largest contribution to come from H$\alpha\times{\rm[O\,III]}$, while Fig.~3 of \citet{Cheng2024} indicates that ${\rm[O\,III]}\times{\rm H}\beta$ dominates.  The most plausible source of this discrepancy is the brightness-ratio weighting in our redshift kernel: the relative amplitudes of $b_i\,\bar{I}_\nu^{(i)}$ at matched redshift directly set the off-diagonal entries, and our [O\,III]/H$\beta$ ratio at $z=2$ is approximately $30\%$ lower than that in \citet{Cheng2024}.  The diagonal Fisher forecast is robust to this difference, because auto-power is sensitive only to the absolute brightness of each line and not to the cross-ratio.  The $20\%$ cross-power gain, on the other hand, could shift by a few percent in either direction once the kernel is brought into exact agreement with the Cheng et al.\ inputs.
+A point on which our forecast differs from the published comparison is the identity of the dominant off-diagonal line pair.  We find the largest contribution to come from H$\alpha\times{\rm[O\,III]}$, while Fig.~3 of \citet{Cheng2024} indicates that ${\rm[O\,III]}\times{\rm H}\beta$ dominates.  The most plausible source of this discrepancy is the brightness-ratio weighting in our redshift kernel: the relative amplitudes of $b_i\,\bar{I}_\nu^{(i)}$ at matched redshift directly set the off-diagonal entries, and our [O\,III]/H$\beta$ ratio at $z=2$ is approximately $30\%$ lower than that in \citet{Cheng2024}.  The diagonal Fisher forecast is robust to this difference, because auto-power is sensitive only to the absolute brightness of each line and not to the cross-ratio.  The $20\%$ cross-power gain, on the other hand, could shift by a few percent in either direction once the kernel is brought into exact agreement with the Cheng et al.\ inputs.  Both identifications are internally consistent with their respective inputs; the disagreement concerns the relative [O\,III] and H$\beta$ brightnesses at $z=2$, which depends on the dust attenuation model and the Case~B recombination assumption. Resolving this requires comparison against direct line measurements rather than against either of our pipelines.
 
 \subsection{Calibration uncertainty in \texorpdfstring{$r_i$}{ri}}
 
