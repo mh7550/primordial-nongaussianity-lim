@@ -9,6 +9,7 @@
 \definecolor{darkblue}{rgb}{0.0,0.0,0.4}
 \usepackage[colorlinks=true,linkcolor=darkblue,citecolor=darkblue,urlcolor=darkblue]{hyperref}
 \usepackage{natbib}
+\usepackage{placeins}
 
 \graphicspath{{../figures/}}
 
@@ -45,7 +46,7 @@ In this paper we present a forecast for $f_{\rm NL}^{\rm local}$ from SPHEREx LI
 \begin{figure*}[t]
 \centering
 \includegraphics[width=\textwidth]{figure_1_joint_summary.pdf}
-\caption{Joint forecast summary.  (a) $\sigma(f_{\rm NL}^{\rm local})$ across estimators---Planck CMB ($5.1$), SPHEREx single-tracer ($1.8$), SPHEREx multi-tracer with auto-spectrum only ($0.89$), and the full cross-power Fisher matrix ($0.71$).  The $\sigma=1$ multi-field threshold is crossed.  (b) Realistic H$\alpha$ S/N as a function of redshift under the v28 noise model.  (c) Deep-field vs.\ all-sky comparison showing the $125\times$ mode advantage that makes the all-sky survey decisively better for $f_{\rm NL}^{\rm local}$.  (d) Per-line contributions showing the methodological changes implemented relative to a constant-noise, diagonal-only baseline.}
+\caption{Joint forecast summary.  (a) $\sigma(f_{\rm NL}^{\rm local})$ across estimators---Planck CMB ($5.1$), SPHEREx single-tracer ($1.8$), SPHEREx multi-tracer with auto-spectrum only ($0.89$), and the full cross-power Fisher matrix ($0.71$).  The $\sigma=1$ multi-field threshold is crossed.  (b) Realistic H$\alpha$ S/N as a function of redshift under the v28 noise model.  (c) Deep-field vs.\ all-sky comparison. The all-sky survey carries $125\times$ more large-scale modes than the deep field, which dominates the $f_{\rm NL}^{\rm local}$ forecast.  (d) Per-line contributions to the single-tracer $\sigma(f_{\rm NL}^{\rm local})$ forecast, with the full multi-tracer constraint shown for comparison.}
 \label{fig:joint}
 \end{figure*}
 
@@ -55,6 +56,7 @@ The remainder of the paper is organised as follows.  Sec.~\ref{sec:theory} revie
 
 \section{Theoretical Framework}
 \label{sec:theory}
+\FloatBarrier
 
 \subsection{Scale-dependent bias}
 \label{sec:theory:bias}
@@ -103,6 +105,7 @@ where $\Sigma_\ell = C_\ell^{\nu\nu'} + N_\ell^{\nu\nu'}$ is the total $92\times
 
 \section{Pipeline Implementation}
 \label{sec:pipeline}
+\FloatBarrier
 
 The forecast is the output of a five-step pipeline.  We summarize each step below; each was validated against an independent reference before being chained into the next.
 
@@ -121,7 +124,7 @@ The baseline single-tracer step takes a halo population with linear bias from \c
 
 The LIM signal model assembles the four lines into the $92$-channel intensity map.  The conversion coefficients $r_i$ are taken from \citet{Cheng2024} for H$\alpha$ and [O\,III], with H$\beta$ derived from the Case~B ratio and [O\,II] calibrated to the same star-formation framework.  Dust attenuation enters as a line-dependent multiplicative factor.  A diagnostic check that the bright-line ordering at $z=2$ (Fig.~\ref{fig:lim}) matches Fig.~2 of \citet{Cheng2024} succeeds only after correcting the [O\,II] dust attenuation from $A_{\rm OII}^{\rm dust} = 0.62$ to $2.30$, the value preferred by the analysis pipeline of \citet{Cheng2024}.  Without this correction, [O\,II] is artificially brighter than H$\beta$ at $z=2$ by a factor of $\sim 1.5$.  The Gaussian redshift kernel of width $\sigma_z = 0.12$ that defines $W_i(\chi)$ controls the strength of the off-diagonal entries in $C_\ell^{\nu\nu'}$: channels separated by $\Delta z \lesssim 0.12$ in physical redshift contribute correlations at the few-percent level, channels at the same redshift but different lines contribute at order unity.
 
-\begin{figure}[t]
+\begin{figure}[!htbp]
 \centering
 \includegraphics[width=\columnwidth]{figure_2_signal_model.pdf}
 \caption{Bias-weighted intensity for the four SPHEREx emission lines.  Top: the comoving line luminosity density $M_i(z)$, peaking near cosmic noon, $z\simeq 2$.  Middle: the bias-weighted intensity $b_i\,\bar{I}_\nu^{(i)}$ as a function of redshift.  Bottom: intensity as a function of observed wavelength with the SPHEREx deep-field (dotted) and all-sky (dashed) noise floors overlaid.  The bright-line ordering ${\rm H}\alpha > {\rm [O\,III]} > {\rm H}\beta > {\rm [O\,II]}$ at $z=2$ holds only after the [O\,II] dust attenuation is corrected to $A^{\rm dust}_{\rm OII} = 2.30$.}
@@ -141,7 +144,7 @@ The final step upgrades the Fisher forecast in three respects.  First, the const
 \begin{figure*}[t]
 \centering
 \includegraphics[width=\columnwidth]{figure_3_noise_model.pdf}
-\caption{SPHEREx v28 wavelength-dependent noise model.  Left: noise $\sigma_n(\lambda)$ for the all-sky (red) and deep-field (blue) surveys, with the previous constant approximations as dashed lines, with band boundaries marked.  Both configurations show a sensitivity optimum near $\lambda = 3.5\,\mu{\rm m}$ and a sharp degradation in band 6.  Right: ratio of v28 noise to the old constant value across wavelength, showing that the constant approximation was optimistic by factors of $30$--$200\times$ depending on wavelength.  The H$\alpha$ $10\sigma$ reach moves from $z \simeq 2.6$ (previous, optimistic) to $z \simeq 1.3$ (realistic).}
+\caption{SPHEREx v28 wavelength-dependent noise model.  Left: noise $\sigma_n(\lambda)$ for the all-sky (red) and deep-field (blue) surveys, with the previous constant approximations as dashed lines, with band boundaries marked.  Both configurations show a sensitivity optimum near $\lambda = 3.5\,\mu{\rm m}$ and a sharp degradation in band 6.  Right: ratio of v28 noise to the old constant value across wavelength, showing that the constant approximation was optimistic by factors of $30$--$200\times$ depending on wavelength.  The H$\alpha$ $10\sigma$ reach moves from $z \simeq 2.6$ (previous, optimistic) to $z \simeq 1.3$ (realistic).  Vertical dotted lines mark the six SPHEREx band boundaries.}
 \label{fig:noise}
 \end{figure*}
 
@@ -183,12 +186,13 @@ The improvement from the diagonal-only Fisher matrix ($0.89$) to the full $92\ti
 \begin{figure*}[t]
 \centering
 \includegraphics[width=0.85\textwidth]{figure_4_cross_power.pdf}
-\caption{Full $92\times 92$ cross-power Fisher matrix compared to the diagonal-only approximation.  Top: visualization of $\Sigma_\ell$ at a representative multipole---diagonal-only (left) and full matrix (right), showing concentrated off-diagonal weight at line pairs observed at matched physical redshifts with band boundaries marked.  Bottom: the resulting $\sigma(f_{\rm NL}^{\rm local})$ improves from $0.89$ to $0.71$, a $20\%$ gain consistent with the \citet{Seljak2009} cosmic-variance cancellation operating at the lower end of its typical $20$--$40\%$ range due to the localised structure of the off-diagonal terms.}
+\caption{Full $92\times 92$ cross-power Fisher matrix compared to the diagonal-only approximation.  Top: correlation matrix $R_{ij} = \Sigma_{ij} / \sqrt{\Sigma_{ii} \Sigma_{jj}}$ at a representative multipole $\ell \approx 75$---diagonal-only (left) shows only auto-correlations, while the full matrix (right) shows concentrated off-diagonal weight at line pairs observed at matched physical redshifts (visible as bright streaks parallel to the diagonal).  Bottom: the resulting $\sigma(f_{\rm NL}^{\rm local})$ improves from $0.89$ to $0.71$, a $20\%$ gain consistent with the \citet{Seljak2009} cosmic-variance cancellation.}
 \label{fig:crosspower}
 \end{figure*}
 
 \section{Discussion}
 \label{sec:discussion}
+\FloatBarrier
 
 \subsection{Comparison with prior work}
 
