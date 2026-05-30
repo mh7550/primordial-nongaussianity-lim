@@ -11,6 +11,12 @@
 \usepackage{natbib}
 \usepackage{placeins}
 
+% Float parameters to reduce white-space gaps
+\renewcommand{\textfraction}{0.05}
+\renewcommand{\topfraction}{0.95}
+\renewcommand{\bottomfraction}{0.95}
+\renewcommand{\floatpagefraction}{0.85}
+
 \graphicspath{{../figures/}}
 
 \begin{document}
@@ -143,7 +149,7 @@ The final step upgrades the Fisher forecast in three respects.  First, the const
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=\columnwidth]{figure_3_noise_model.pdf}
+\includegraphics[width=\textwidth]{figure_3_noise_model.pdf}
 \caption{SPHEREx v28 wavelength-dependent noise model.  Left: noise $\sigma_n(\lambda)$ for the all-sky (red) and deep-field (blue) surveys, with the previous constant approximations as dashed lines, with band boundaries marked.  Both configurations show a sensitivity optimum near $\lambda = 3.5\,\mu{\rm m}$ and a sharp degradation in band 6.  Right: ratio of v28 noise to the old constant value across wavelength, showing that the constant approximation was optimistic by factors of $30$--$200\times$ depending on wavelength.  The H$\alpha$ $10\sigma$ reach moves from $z \simeq 2.6$ (previous, optimistic) to $z \simeq 1.3$ (realistic).  Vertical dotted lines mark the six SPHEREx band boundaries.}
 \label{fig:noise}
 \end{figure*}

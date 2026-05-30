@@ -20,12 +20,12 @@ plt.rcParams['legend.fontsize'] = 7
 plt.rcParams['axes.linewidth'] = 0.8
 plt.rcParams['lines.linewidth'] = 1.5
 
-# Colorblind-safe palette
+# Muted color palette (Cheng+2024 style)
 LINE_COLORS = {
-    'Halpha': '#E69F00',
-    'OIII': '#56B4E9',
-    'Hbeta': '#009E73',
-    'OII': '#CC79A7'
+    'Halpha': '#B23B3B',   # muted red
+    'OIII': '#3F7CAC',     # muted blue
+    'Hbeta': '#5A8C3E',    # muted green
+    'OII': '#7B4B94'       # muted purple
 }
 
 # Emission line rest wavelengths (microns)
@@ -63,10 +63,9 @@ def figure_2_signal_model():
         ax.plot(z_plot, M_i / 1e40, '-', lw=2, color=LINE_COLORS[line], label=label)
 
     ax.set_xlabel(r'Redshift $z$')
-    ax.set_ylabel(r'$M_i(z)$ [$10^{40}$ erg s$^{-1}$ Mpc$^{-3}$]')
-    ax.legend(frameon=False, loc='upper right')
-    ax.text(0.02, 0.98, '(a)', transform=ax.transAxes, fontsize=10,
-            fontweight='bold', va='top')
+    ax.set_ylabel(r'$M_i(z)$ [$10^{40}$ erg s$^{-1}$ Mpc$^{-3}$]', labelpad=2)
+    ax.legend(frameon=False, loc='upper right', fontsize=8)
+    ax.text(0.02, 0.98, '(a)', transform=ax.transAxes, fontsize=9, va='top')
     ax.set_xlim(0.5, 4)
     ax.set_ylim(0, None)
 
@@ -86,9 +85,8 @@ def figure_2_signal_model():
         ax.plot(z_plot, b_i * I_nu, '-', lw=2, color=LINE_COLORS[line])
 
     ax.set_xlabel(r'Redshift $z$')
-    ax.set_ylabel(r'$b_i \, \bar{I}_\nu$ [nW m$^{-2}$ sr$^{-1}$]')
-    ax.text(0.02, 0.98, '(b)', transform=ax.transAxes, fontsize=10,
-            fontweight='bold', va='top')
+    ax.set_ylabel(r'$b_i \, \bar{I}_\nu$ [nW m$^{-2}$ sr$^{-1}$]', labelpad=2)
+    ax.text(0.02, 0.98, '(b)', transform=ax.transAxes, fontsize=9, va='top')
     ax.set_xlim(0.5, 4)
     ax.set_ylim(0, None)
 
@@ -131,15 +129,14 @@ def figure_2_signal_model():
     ax.axvspan(0.75, 5.0, alpha=0.05, color='gray', zorder=0)
 
     ax.set_xlabel(r'Observed wavelength $\lambda$ [$\mu$m]')
-    ax.set_ylabel(r'$b_i \, \bar{I}_\nu$ [nW m$^{-2}$ sr$^{-1}$]')
-    ax.legend(frameon=False, loc='upper left', fontsize=7)
-    ax.text(0.02, 0.98, '(c)', transform=ax.transAxes, fontsize=10,
-            fontweight='bold', va='top')
+    ax.set_ylabel(r'$b_i \, \bar{I}_\nu$ [nW m$^{-2}$ sr$^{-1}$]', labelpad=2)
+    ax.legend(frameon=False, loc='upper left', fontsize=8)
+    ax.text(0.02, 0.98, '(c)', transform=ax.transAxes, fontsize=9, va='top')
     ax.set_xlim(0.7, 5.1)
     ax.set_yscale('log')
     ax.set_ylim(0.01, 30)
 
-    plt.tight_layout()
+    plt.subplots_adjust(left=0.08, right=0.99, top=0.96, bottom=0.18, wspace=0.28)
     output_path = os.path.join(os.path.dirname(__file__), '..', 'figures',
                               'figure_2_signal_model.pdf')
     plt.savefig(output_path, dpi=300, bbox_inches='tight')

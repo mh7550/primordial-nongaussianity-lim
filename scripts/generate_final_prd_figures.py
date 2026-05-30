@@ -42,12 +42,12 @@ mpl.rcParams.update({
     "ytick.minor.visible": True,
 })
 
-# Color palette
+# Muted color palette (Cheng+2024 style)
 LINE_COLORS = {
-    'Halpha': '#C0392B',
-    'OIII': '#2980B9',
-    'Hbeta': '#27AE60',
-    'OII': '#8E44AD'
+    'Halpha': '#B23B3B',   # muted red
+    'OIII': '#3F7CAC',     # muted blue
+    'Hbeta': '#5A8C3E',    # muted green
+    'OII': '#7B4B94'       # muted purple
 }
 
 # Survey parameters
@@ -65,10 +65,10 @@ def load_noise_data():
     return data[:, 0], data[:, 1], data[:, 2]
 
 def add_panel_label(ax, label, x=0.03, y=0.97):
-    """Add bold panel label with white background."""
-    bbox = dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor='none', alpha=0.8)
-    ax.text(x, y, label, transform=ax.transAxes, fontsize=11,
-            fontweight='bold', va='top', ha='left', bbox=bbox)
+    """Add panel label (Cheng+2024 style: simple, no bold, small background box)."""
+    bbox = dict(boxstyle='round,pad=0.2', facecolor='white', edgecolor='none', alpha=0.7)
+    ax.text(x, y, label, transform=ax.transAxes, fontsize=9,
+            va='top', ha='left', bbox=bbox)
 
 def madau_sfrd(z):
     """Madau-Dickinson SFRD."""
@@ -381,27 +381,26 @@ def figure_4_cross_power():
     cbar2.set_label(r'$R_{ij}$', rotation=0, labelpad=15)
     add_panel_label(ax2, '(b)')
 
-    # Panel (c): Bar chart
-    configs = ['Planck\nCMB', 'SPHEREx\ndiagonal', 'SPHEREx\nfull matrix']
+    # Panel (c): Bar chart - Cheng+2024 style (muted colors, no bold labels)
+    configs = ['Planck\nCMB', 'Diagonal', 'Full matrix']
     sigmas = [SIGMA_FNL_PLANCK, SIGMA_FNL_MULTI_DIAG, SIGMA_FNL_MULTI_FULL]
-    colors_bar = ['#d62728', '#ff7f0e', '#2ca02c']
+    # Muted color palette matching Cheng+2024
+    colors_bar = ['#8B4444', '#A87838', '#3F6E47']  # muted dark red, ochre, dark green
 
-    bars = ax3.bar(configs, sigmas, color=colors_bar, alpha=0.75,
-                   edgecolor='black', lw=1.0)
-    ax3.axhline(1.0, color='black', ls='--', lw=1.2, alpha=0.6)
+    bars = ax3.bar(configs, sigmas, width=0.55, color=colors_bar, alpha=0.85,
+                   edgecolor='black', linewidth=0.6)
+    ax3.axhline(1.0, color='0.5', ls='--', lw=0.8)
 
+    # Value labels above bars - NOT bold, regular weight
     ax3.bar_label(bars, labels=[f'{s:.2f}' for s in sigmas],
-                  padding=3, fontweight='bold', fontsize=9)
+                  padding=0.08, fontsize=9)
 
-    # Annotate improvement
-    ax3.annotate('20% better',
-                xy=(2, SIGMA_FNL_MULTI_FULL), xytext=(1.5, 2.0),
-                arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0.3',
-                               lw=1.5, color='green'),
-                fontsize=10, color='green', fontweight='bold')
+    # Simple italic text annotation between bars (no arrow, no callout box)
+    ax3.text(1.5, 1.3, r'−20% relative', fontsize=8, style='italic',
+             ha='center', va='bottom', color='0.3')
 
     ax3.set_ylabel(r'$\sigma(f_{\mathrm{NL}}^{\mathrm{local}})$')
-    ax3.set_ylim(0, 6)
+    ax3.set_ylim(0, 5.6)
     add_panel_label(ax3, '(c)')
 
     plt.tight_layout()
