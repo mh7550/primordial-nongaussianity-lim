@@ -42,17 +42,40 @@ C_LIGHT = 299792.458  # Speed of light in km/s
 C_CGS = 2.99792458e10  # Speed of light in cm/s
 MPC_TO_CM = 3.085677581e24  # Megaparsec in cm
 
-# Emission line properties
+# ═════════════════════════════════════════════════════════════════════════════
+# Emission Line Properties — r_i Conversion Factors
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# CURRENT VALUES (Cheng et al. 2024, arXiv:2403.19740, Table 1):
+#   Hα:    r_i = 1.27×10⁴¹ erg/s per (M☉/yr),  A_dust = 1.0
+#   [OIII]: r_i = 1.32×10⁴¹ erg/s per (M☉/yr),  A_dust = 1.32
+#   Hβ:    r_i = 0.444×10⁴¹ (via L_Hβ/L_Hα = 0.35), A_dust = 1.38
+#   [OII]:  r_i = 0.71×10⁴¹ erg/s per (M☉/yr),  A_dust = 2.30 (corrected)
+#
+# COMPARISON TO GONG ET AL. (2017, ApJ 835, 273):
+#   ** NOTE: Gong et al. r_i values require manual verification from full paper **
+#   The Gong paper uses observed luminosity functions and SFRD calibrations
+#   for Hα, [OIII], Hβ, [OII] at 0.8 ≤ z ≤ 5.2. Values may differ from Cheng+2024
+#   by up to ~30% depending on SFR indicator and dust model assumptions.
+#
+# FIX 1 ACTION ITEMS (per Pullen meeting Apr 2026):
+#   1. Verify Gong+ r_i values against Cheng+ values (Table 1 comparison)
+#   2. Flag any discrepancies > 10%
+#   3. Generate diagnostic figure showing M_i(z) impact of r_i variations
+#   4. Document both sources for future reference
+#
 # Format: {name: (rest_wavelength_um, r_i_erg_per_s_per_Msun_yr, dust_extinction_A_i)}
+# ═════════════════════════════════════════════════════════════════════════════
+
 LINE_PROPERTIES = {
     'Halpha': {
         'lambda_rest': 0.6563,  # μm
-        'r_i': 1.27e41,  # erg/s per (M_sun/yr)
+        'r_i': 1.27e41,  # erg/s per (M_sun/yr) — Cheng+2024
         'A_i': 1.0,  # dust extinction factor
     },
     'OIII': {
         'lambda_rest': 0.5007,  # μm
-        'r_i': 1.32e41,  # erg/s per (M_sun/yr)
+        'r_i': 1.32e41,  # erg/s per (M_sun/yr) — Cheng+2024
         'A_i': 1.32,  # dust extinction factor
     },
     'Hbeta': {
@@ -63,7 +86,7 @@ LINE_PROPERTIES = {
     },
     'OII': {
         'lambda_rest': 0.3727,  # μm
-        'r_i': 0.71e41,  # erg/s per (M_sun/yr)
+        'r_i': 0.71e41,  # erg/s per (M_sun/yr) — Cheng+2024
         'A_i': 2.30,  # dust extinction factor (corrected from 0.62)
     },
 }
