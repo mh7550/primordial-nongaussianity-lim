@@ -392,3 +392,32 @@ def get_comoving_distance(z):
     if scalar_input:
         return chi[0]
     return chi
+
+
+def growth_rate(z):
+    """
+    Compute the linear growth rate f(z) = [Ω_m(z)]^0.55.
+
+    The growth rate parameterises how fast structure grows at redshift z.
+    It enters the redshift-space distortion (Kaiser) correction as an
+    additive shift to the effective bias in the linear regime.
+
+    Parameters
+    ----------
+    z : float or array_like
+        Redshift.
+
+    Returns
+    -------
+    f : float or array_like
+        Linear growth rate, dimensionless.
+
+    Notes
+    -----
+    Uses the standard γ = 0.55 approximation for ΛCDM:
+        f(z) = Ω_m(z)^0.55,     Ω_m(z) = Ω_m (1+z)^3 / E(z)^2.
+    """
+    z = np.asarray(z, dtype=float)
+    E_sq = Om0 * (1.0 + z) ** 3 + Ode0
+    Om_z = Om0 * (1.0 + z) ** 3 / E_sq
+    return Om_z ** 0.55

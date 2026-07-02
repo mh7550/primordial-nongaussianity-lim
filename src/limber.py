@@ -39,14 +39,17 @@ LoVerde & Afshordi, PRD 78, 123506 (2008) — Extended Limber for PNG
 import numpy as np
 from scipy import integrate
 from scipy.interpolate import interp1d
+from scipy.special import spherical_jn
 
 # Import from our modules
 try:
-    from .cosmology import get_growth_factor, get_power_spectrum, Om0, H0, Ode0
-    from .bias_functions import get_total_bias
+    from .cosmology import (get_growth_factor, get_power_spectrum, Om0, H0, Ode0,
+                            growth_rate)
+    from .bias_functions import get_total_bias, delta_b_local
 except ImportError:
-    from cosmology import get_growth_factor, get_power_spectrum, Om0, H0, Ode0
-    from bias_functions import get_total_bias
+    from cosmology import (get_growth_factor, get_power_spectrum, Om0, H0, Ode0,
+                           growth_rate)
+    from bias_functions import get_total_bias, delta_b_local
 
 
 # Speed of light in km/s
@@ -420,6 +423,262 @@ def compute_dCl_dfNL_auto(ell, z_min, z_max, b1,
     """
     return compute_dCl_dfNL_cross(ell, z_min, z_max, b1, b1,
                                   fNL_fid=fNL_fid, shape=shape, delta_fNL=delta_fNL)
+
+
+# ---------------------------------------------------------------------------
+# Full-Bessel projection (Item 1 + Item 2)
+# ---------------------------------------------------------------------------
+#
+# The Limber approximation is only accurate for ℓ ≳ ℓ_limber where
+#
+#     ℓ_limber = [r(z) / (3000 Mpc/h)] × E(z) × (λ_rest / Δλ)
+#
+# evaluated at the channel's peak redshift. At smaller ℓ we compute
+#
+#     C_ℓ^{ij} = (2/π) ∫ k² dk P(k) Δ_ℓ^i(k) Δ_ℓ^j(k)
+#
+# with the transfer function
+#
+#     Δ_ℓ^i(k) = ∫ dz W_i(z) [b_eff,i(z) + f_NL Δb_i(k,z)] D(z) j_ℓ(k r(z))
+#
+# where the Kaiser correction (Item 2) makes b_eff,i(z) = b_i(z) + f(z) with
+# f(z) = Ω_m(z)^0.55 (see cosmology.growth_rate). The window W_i(z) is the
+# top-hat channel profile in observed wavelength, i.e. z ∈ [z_min, z_max].
+# ---------------------------------------------------------------------------
+
+
+def compute_ell_limber(lambda_rest, delta_lambda, z_peak):
+    """
+    Compute the multipole above which the Limber approximation is accurate.
+
+    Parameters
+    ----------
+    lambda_rest : float
+        Rest-frame wavelength of the emission line in μm.
+    delta_lambda : float
+        Channel width in wavelength (observed frame) in μm.
+    z_peak : float
+        Peak (central) redshift of the channel = λ_obs / λ_rest − 1.
+
+    Returns
+    -------
+    ell_limber : float
+        Threshold multipole; use full Bessel for ℓ ≤ ell_limber.
+    """
+    r_z = get_comoving_distance(z_peak)  # Mpc/h
+    E_z = np.sqrt(Om0 * (1.0 + z_peak) ** 3 + Ode0)
+    return (r_z / 3000.0) * E_z * (lambda_rest / delta_lambda)
+
+
+def _tophat_z_bounds(z_peak, lambda_rest, delta_lambda):
+    """
+    Convert a channel of width Δλ around observed wavelength λ_obs = λ_rest (1+z_peak)
+    into a top-hat redshift window [z_min, z_max].
+    """
+    lam_obs = lambda_rest * (1.0 + z_peak)
+    z_min = max(0.0, (lam_obs - 0.5 * delta_lambda) / lambda_rest - 1.0)
+    z_max = (lam_obs + 0.5 * delta_lambda) / lambda_rest - 1.0
+    return z_min, z_max
+
+
+def _bessel_transfer(ell, k_grid, z_grid, chi_grid, D_grid,
+                     b1_of_z, lambda_rest, delta_lambda, z_peak,
+                     fNL, use_rsd):
+    """
+    Evaluate Δ_ℓ(k) on a k-grid for a single channel.
+
+    Parameters
+    ----------
+    ell : int
+        Multipole.
+    k_grid : ndarray, shape (Nk,)
+        Wavenumber grid in h/Mpc.
+    z_grid, chi_grid, D_grid : ndarray, shape (Nz,)
+        Redshift, comoving-distance, and linear-growth arrays inside the top-hat.
+    b1_of_z : callable
+        b1(z) for the channel's emission line.
+    lambda_rest, delta_lambda, z_peak : float
+        Channel geometry (unused inside the integrand but retained for signature).
+    fNL : float
+        Fiducial f_NL for the scale-dependent bias.
+    use_rsd : bool
+        If True, add Kaiser growth-rate term to the effective bias.
+
+    Returns
+    -------
+    Delta : ndarray, shape (Nk,)
+        Transfer function Δ_ℓ(k).
+    """
+    Nk = k_grid.size
+    Nz = z_grid.size
+    dz = z_grid[1] - z_grid[0]
+
+    # Precompute z-dependent factors that do not depend on k.
+    b1_arr = np.asarray([b1_of_z(z) for z in z_grid])
+    if use_rsd:
+        b_eff_arr = b1_arr + growth_rate(z_grid)
+    else:
+        b_eff_arr = b1_arr
+
+    # Normalised top-hat window: W(z) = 1 / Δz within the bin.
+    W_arr = np.full(Nz, 1.0 / (z_grid[-1] - z_grid[0]))
+
+    Delta = np.zeros(Nk)
+    for ik, k in enumerate(k_grid):
+        # Δb_i(k,z) for each z (already contains D(z) factor internally).
+        db_arr = np.asarray([delta_b_local(k, z, fNL, b1_arr[iz])
+                             for iz, z in enumerate(z_grid)])
+        # j_ℓ(k r(z))
+        j_arr = spherical_jn(int(ell), k * chi_grid)
+        integrand = W_arr * (b_eff_arr + db_arr) * D_grid * j_arr
+        Delta[ik] = np.trapezoid(integrand, z_grid)
+
+    return Delta
+
+
+# Cache Δ_ℓ(k) arrays keyed by (line, ell, fNL_sign, use_rsd) to avoid
+# recomputing the Bessel integrals repeatedly during Fisher assembly.
+_BESSEL_CACHE = {}
+
+
+def _bessel_cache_key(line_key, ell, fNL, use_rsd, b_scale, I_scale):
+    # Round to keep small numerical perturbations from busting the cache.
+    return (line_key, int(ell), round(fNL, 6), bool(use_rsd),
+            round(b_scale, 8), round(I_scale, 8))
+
+
+def compute_cl_bessel(ell, channel_i, channel_j, fNL=0.0, use_rsd=True,
+                      k_min=1e-4, k_max=0.3, n_k=64, n_z=25):
+    """
+    Full-Bessel angular power spectrum between two LIM channels at multipole ℓ.
+
+    Parameters
+    ----------
+    ell : int
+        Multipole.
+    channel_i, channel_j : dict
+        Channel descriptors with keys:
+            'line'          : line label used for caching,
+            'lambda_rest'   : rest wavelength (μm),
+            'delta_lambda'  : channel width (μm),
+            'z_peak'        : central redshift,
+            'b1_of_z'       : callable b1(z),
+            'I_scale'       : multiplicative intensity nuisance (default 1),
+            'b_scale'       : multiplicative bias nuisance (default 1).
+    fNL : float
+        Local f_NL used for Δb.
+    use_rsd : bool
+        Include Kaiser RSD correction (Item 2).
+    k_min, k_max : float
+        k-integration range in h/Mpc.
+    n_k, n_z : int
+        Grid sizes for k and z.
+    """
+    z_lo_i, z_hi_i = _tophat_z_bounds(channel_i['z_peak'],
+                                      channel_i['lambda_rest'],
+                                      channel_i['delta_lambda'])
+    z_lo_j, z_hi_j = _tophat_z_bounds(channel_j['z_peak'],
+                                      channel_j['lambda_rest'],
+                                      channel_j['delta_lambda'])
+
+    # Support each transfer function on its own top-hat.
+    k_grid = np.logspace(np.log10(k_min), np.log10(k_max), n_k)
+
+    def _delta_for_channel(ch, z_lo, z_hi):
+        line = ch['line']
+        b_scale = ch.get('b_scale', 1.0)
+        I_scale = ch.get('I_scale', 1.0)
+        key = _bessel_cache_key(line, ell, fNL, use_rsd, b_scale, I_scale)
+        cached = _BESSEL_CACHE.get(key)
+        if cached is not None:
+            return cached
+
+        z_grid = np.linspace(z_lo + 1e-6, z_hi, n_z)
+        chi_grid = np.asarray([get_comoving_distance(z) for z in z_grid])
+        D_grid = get_growth_factor(z_grid)
+
+        base_b1 = ch['b1_of_z']
+        b1_of_z_scaled = (lambda z: b_scale * base_b1(z))
+
+        Delta = _bessel_transfer(ell, k_grid, z_grid, chi_grid, D_grid,
+                                 b1_of_z_scaled,
+                                 ch['lambda_rest'], ch['delta_lambda'],
+                                 ch['z_peak'],
+                                 fNL, use_rsd)
+        Delta = I_scale * Delta
+        _BESSEL_CACHE[key] = Delta
+        return Delta
+
+    Delta_i = _delta_for_channel(channel_i, z_lo_i, z_hi_i)
+    Delta_j = _delta_for_channel(channel_j, z_lo_j, z_hi_j)
+
+    P_grid = np.asarray([get_power_spectrum(k, z=0.0) for k in k_grid])
+    integrand = (k_grid ** 2) * P_grid * Delta_i * Delta_j
+    # (2/π) ∫ k² dk P(k) Δ_i(k) Δ_j(k), with the D(z) factor already in Δ.
+    return (2.0 / np.pi) * np.trapezoid(integrand, k_grid)
+
+
+def clear_bessel_cache():
+    """Reset the Δ_ℓ(k) cache. Call between Fisher runs with different setups."""
+    _BESSEL_CACHE.clear()
+
+
+def compute_cls_full(ell, channel_i, channel_j, fNL=0.0, use_rsd=True,
+                     validate=False):
+    """
+    Dispatch to the Limber or full-Bessel calculation based on ℓ_limber.
+
+    Uses the Bessel integrator for ℓ ≤ ℓ_limber (evaluated at the peak
+    redshift of the higher-ℓ channel) and the existing Limber implementation
+    otherwise. When ``validate=True`` and ℓ ≈ 5 × ℓ_limber, both are computed
+    and their agreement checked to within 5%.
+    """
+    # Use the max ℓ_limber across the two channels so we default to Bessel
+    # whenever *either* channel would need it.
+    ell_lim_i = compute_ell_limber(channel_i['lambda_rest'],
+                                   channel_i['delta_lambda'],
+                                   channel_i['z_peak'])
+    ell_lim_j = compute_ell_limber(channel_j['lambda_rest'],
+                                   channel_j['delta_lambda'],
+                                   channel_j['z_peak'])
+    ell_lim = max(ell_lim_i, ell_lim_j)
+
+    if ell <= ell_lim:
+        return compute_cl_bessel(ell, channel_i, channel_j,
+                                 fNL=fNL, use_rsd=use_rsd)
+
+    # High-ℓ Limber path. Reuse the existing cross-spectrum utility on the
+    # geometric overlap of the two channels.
+    z_lo_i, z_hi_i = _tophat_z_bounds(channel_i['z_peak'],
+                                      channel_i['lambda_rest'],
+                                      channel_i['delta_lambda'])
+    z_lo_j, z_hi_j = _tophat_z_bounds(channel_j['z_peak'],
+                                      channel_j['lambda_rest'],
+                                      channel_j['delta_lambda'])
+    z_lo = max(z_lo_i, z_lo_j)
+    z_hi = min(z_hi_i, z_hi_j)
+    if z_hi <= z_lo:
+        return 0.0
+
+    z_mid = 0.5 * (z_lo + z_hi)
+    b1_i = channel_i['b_scale'] * channel_i['b1_of_z'](z_mid)
+    b1_j = channel_j['b_scale'] * channel_j['b1_of_z'](z_mid)
+    scale = channel_i['I_scale'] * channel_j['I_scale']
+    cl_limber = scale * get_cross_power_spectrum(
+        np.asarray([ell]), z_lo, z_hi, b1_i, b1_j, fNL=fNL, shape='local'
+    )[0]
+
+    if validate and ell >= 5 * ell_lim and ell_lim > 0:
+        cl_bessel = compute_cl_bessel(ell, channel_i, channel_j,
+                                      fNL=fNL, use_rsd=use_rsd)
+        if cl_limber != 0:
+            rel = abs(cl_bessel - cl_limber) / abs(cl_limber)
+            if rel > 0.05:
+                print(f"[compute_cls_full] WARNING: Bessel vs Limber disagree "
+                      f"by {rel*100:.1f}% at ℓ={ell} for "
+                      f"({channel_i['line']}, {channel_j['line']})")
+
+    return cl_limber
 
 
 if __name__ == "__main__":

@@ -51,14 +51,18 @@ from scipy import linalg
 try:
     from .limber import (get_angular_power_spectrum, get_cross_power_spectrum,
                          compute_dCl_dfNL_cross, compute_dCl_dfNL_auto,
-                         get_comoving_distance, get_hubble)
+                         get_comoving_distance, get_hubble,
+                         compute_cls_full, compute_ell_limber,
+                         clear_bessel_cache)
     from .survey_specs import (get_noise_power_spectrum_simple, F_SKY,
                                get_bias, get_number_density, SPHEREX_Z_BINS,
                                N_SAMPLES, N_Z_BINS, get_shot_noise_angular)
 except ImportError:
     from limber import (get_angular_power_spectrum, get_cross_power_spectrum,
                         compute_dCl_dfNL_cross, compute_dCl_dfNL_auto,
-                        get_comoving_distance, get_hubble)
+                        get_comoving_distance, get_hubble,
+                        compute_cls_full, compute_ell_limber,
+                        clear_bessel_cache)
     from survey_specs import (get_noise_power_spectrum_simple, F_SKY,
                               get_bias, get_number_density, SPHEREX_Z_BINS,
                               N_SAMPLES, N_Z_BINS, get_shot_noise_angular)
@@ -617,6 +621,168 @@ def compute_single_sample_forecast(ell_array, sample_num, z_bin_indices=None,
 
     sigma_fNL = 1.0 / np.sqrt(F_total) if F_total > 0 else np.inf
     return sigma_fNL
+
+
+# ---------------------------------------------------------------------------
+# 9×9 marginalised Fisher matrix (Item 3)
+# ---------------------------------------------------------------------------
+#
+# θ = [f_NL, A_Hα, B_Hα, A_[OIII], B_[OIII], A_Hβ, B_Hβ, A_[OII], B_[OII]]
+#
+# A_i rescales the line intensity I_ν^i → A_i I_ν^i, while B_i rescales the
+# linear bias b_i(z) → B_i b_i(z). The scale-dependent bias Δb_i(k,z) inherits
+# the B_i rescaling through its (b_1 − 1) factor. Fiducial A_i = B_i = 1.
+# ---------------------------------------------------------------------------
+
+PARAM_NAMES_9x9 = [
+    'fNL',
+    'A_Halpha', 'B_Halpha',
+    'A_OIII',   'B_OIII',
+    'A_Hbeta',  'B_Hbeta',
+    'A_OII',    'B_OII',
+]
+_LINE_ORDER_9x9 = ['Halpha', 'OIII', 'Hbeta', 'OII']
+
+
+def _sigma_matrix_at_ell(ell, channels, fNL, A_vec, B_vec, N_diag,
+                         use_rsd=True):
+    """
+    Assemble the N_ch × N_ch signal+noise covariance Σ_ℓ.
+
+    A_vec and B_vec are indexed by line name → scalar.
+    """
+    n = len(channels)
+    Sigma = np.zeros((n, n))
+    # Apply per-channel A_i, B_i by overriding the two scale factors on a
+    # shallow copy of each channel dict.
+    ch_scaled = []
+    for ch in channels:
+        line = ch['line']
+        c = dict(ch)
+        c['I_scale'] = A_vec[line]
+        c['b_scale'] = B_vec[line]
+        ch_scaled.append(c)
+
+    for i in range(n):
+        for j in range(i, n):
+            cl = compute_cls_full(ell, ch_scaled[i], ch_scaled[j],
+                                  fNL=fNL, use_rsd=use_rsd)
+            Sigma[i, j] = cl
+            Sigma[j, i] = cl
+    Sigma += np.diag(N_diag)
+    return Sigma
+
+
+def _perturb(vec, key, delta):
+    out = dict(vec)
+    out[key] = vec[key] + delta
+    return out
+
+
+def compute_fisher_9x9(ell_array, channels, N_diag, f_sky=F_SKY,
+                       fNL_fid=1.0, delta_AB=0.01, delta_fNL=0.1,
+                       use_rsd=True, verbose=False):
+    """
+    Compute the 9×9 marginalised Fisher matrix for f_NL and 8 nuisance params.
+
+    Parameters
+    ----------
+    ell_array : array_like
+        Multipoles to sum over.
+    channels : list of dict
+        LIM channel descriptors; each must include 'line' ∈ {'Halpha','OIII',
+        'Hbeta','OII'} plus the fields consumed by compute_cls_full.
+    N_diag : array_like
+        Diagonal instrument-noise vector, length len(channels).
+    f_sky : float
+        Sky fraction.
+    fNL_fid : float
+        Fiducial f_NL used for the derivative (non-zero to avoid the k^-2
+        divergence at exactly zero — the reported constraint is centred on
+        f_NL=0, we only need a well-defined ∂Σ/∂f_NL).
+    delta_AB : float
+        Two-sided step for the A_i and B_i derivatives (fractional).
+    delta_fNL : float
+        Two-sided step for the f_NL derivative.
+    use_rsd : bool
+        Include RSD in the Bessel regime.
+    verbose : bool
+        Print progress per ℓ.
+
+    Returns
+    -------
+    F : ndarray, shape (9, 9)
+        Total Fisher matrix summed over ℓ.
+    """
+    channels = list(channels)
+    N_diag = np.asarray(N_diag, dtype=float)
+    n_par = 9
+
+    # Fiducial nuisance dictionaries.
+    A0 = {line: 1.0 for line in _LINE_ORDER_9x9}
+    B0 = {line: 1.0 for line in _LINE_ORDER_9x9}
+
+    def dSigma_dA(line, ell):
+        Sp = _sigma_matrix_at_ell(ell, channels, fNL_fid,
+                                  _perturb(A0, line, +delta_AB), B0, N_diag,
+                                  use_rsd)
+        Sm = _sigma_matrix_at_ell(ell, channels, fNL_fid,
+                                  _perturb(A0, line, -delta_AB), B0, N_diag,
+                                  use_rsd)
+        return (Sp - Sm) / (2.0 * delta_AB)
+
+    def dSigma_dB(line, ell):
+        Sp = _sigma_matrix_at_ell(ell, channels, fNL_fid,
+                                  A0, _perturb(B0, line, +delta_AB), N_diag,
+                                  use_rsd)
+        Sm = _sigma_matrix_at_ell(ell, channels, fNL_fid,
+                                  A0, _perturb(B0, line, -delta_AB), N_diag,
+                                  use_rsd)
+        return (Sp - Sm) / (2.0 * delta_AB)
+
+    def dSigma_dfNL(ell):
+        Sp = _sigma_matrix_at_ell(ell, channels, fNL_fid + delta_fNL,
+                                  A0, B0, N_diag, use_rsd)
+        Sm = _sigma_matrix_at_ell(ell, channels, fNL_fid - delta_fNL,
+                                  A0, B0, N_diag, use_rsd)
+        return (Sp - Sm) / (2.0 * delta_fNL)
+
+    F = np.zeros((n_par, n_par))
+    for ell in ell_array:
+        clear_bessel_cache()  # different ℓ ⇒ different j_ℓ tables
+        Sigma = _sigma_matrix_at_ell(ell, channels, fNL_fid, A0, B0, N_diag,
+                                     use_rsd)
+        try:
+            Sigma_inv = np.linalg.inv(Sigma)
+        except np.linalg.LinAlgError:
+            continue
+
+        # Build the list of 9 derivative matrices.
+        dS = [dSigma_dfNL(ell)]
+        for line in _LINE_ORDER_9x9:
+            dS.append(dSigma_dA(line, ell))
+            dS.append(dSigma_dB(line, ell))
+
+        weight = (2.0 * ell + 1.0) * f_sky / 2.0
+        M_list = [Sigma_inv @ dSi for dSi in dS]
+        for a in range(n_par):
+            for b in range(a, n_par):
+                F_ab = weight * np.trace(M_list[a] @ M_list[b])
+                F[a, b] += F_ab
+                if a != b:
+                    F[b, a] += F_ab
+        if verbose:
+            print(f"  ℓ={ell:>4d}: F[fNL,fNL] running sum = {F[0,0]:.3e}")
+
+    return F
+
+
+def sigma_fNL_from_fisher_9x9(F, marginalised=True):
+    """Return σ(f_NL) either marginalised over the 8 nuisance params or not."""
+    if marginalised:
+        cov = np.linalg.pinv(F)
+        return float(np.sqrt(cov[0, 0]))
+    return float(1.0 / np.sqrt(F[0, 0]))
 
 
 if __name__ == "__main__":
