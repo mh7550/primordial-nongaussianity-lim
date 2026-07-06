@@ -681,6 +681,316 @@ def compute_cls_full(ell, channel_i, channel_j, fNL=0.0, use_rsd=True,
     return cl_limber
 
 
+# ---------------------------------------------------------------------------
+# LIM intensity-space C_ℓ backend  (Step 1 of the Pullen refactor)
+# ---------------------------------------------------------------------------
+# Produces C_ℓ^{νν'} in (nW/m²/sr)² so that σ_n² Ω_pix on the diagonal is on
+# the same units footing.  Formalism follows Cheng+2024 with a Gaussian
+# redshift kernel of width σ_z = 0.12 per channel.
+#
+#     C_ℓ^{νν'} = [b_i(z̄) Ī_ν^i(z̄)] [b_j(z̄) Ī_ν'^j(z̄)]
+#                × (H_h(z̄)/c) / χ_h²(z̄) × P_m(k=(ℓ+½)/χ_h, z̄) × W_{νν'}
+#
+# with the Gaussian-window overlap
+#     W_{νν'} = 1/(2√π σ_z) × exp[-(z_ν − z_ν')² / (4 σ_z²)]
+#
+# Cross-line pairs (line_ν ≠ line_ν') pick up the same overlap factor, so a
+# non-vanishing cross only occurs when the two channels see different lines
+# at approximately the same physical redshift — the LIM analogue of the
+# multi-tracer cosmic-variance cancellation.
+# ---------------------------------------------------------------------------
+
+# Lazy imports of lim_signal to avoid hard dependency on the LIM signal model
+# for consumers that only need galaxy-clustering Limber. Keep the intensity
+# lookup fast by caching values on a shared z-grid.
+_LIM_SIGNAL_MOD = None
+_INTENSITY_CACHE = {}   # keyed by (line, round(z, 4))
+
+
+def _get_lim_signal():
+    global _LIM_SIGNAL_MOD
+    if _LIM_SIGNAL_MOD is None:
+        try:
+            from . import lim_signal as _m
+        except ImportError:
+            import lim_signal as _m
+        _LIM_SIGNAL_MOD = _m
+    return _LIM_SIGNAL_MOD
+
+
+def _mean_intensity(line, z):
+    """Ī_ν^i(z) in nW/m²/sr, mean line intensity WITHOUT the halo bias factor."""
+    key = (line, round(float(z), 5))
+    cached = _INTENSITY_CACHE.get(key)
+    if cached is not None:
+        return cached
+    m = _get_lim_signal()
+    val = float(m.get_line_intensity(float(z), line=line, return_bias_weighted=False))
+    _INTENSITY_CACHE[key] = val
+    return val
+
+
+def clear_intensity_cache():
+    _INTENSITY_CACHE.clear()
+
+
+SIGMA_Z_KERNEL = 0.12  # Cheng+2024 / paper text
+
+
+def _window_overlap(z_nu, z_nup, sigma_z=SIGMA_Z_KERNEL):
+    """∫ W_ν(z) W_ν'(z) dz for two normalised Gaussians of width σ_z."""
+    dz = z_nu - z_nup
+    return (1.0 / (2.0 * np.sqrt(np.pi) * sigma_z)) * \
+           np.exp(-(dz ** 2) / (4.0 * sigma_z ** 2))
+
+
+def compute_lim_cl_limber(ell, ch_i, ch_j, fNL=0.0):
+    """
+    Limber-approximated intensity-space C_ℓ between two LIM channels.
+
+    Units: (nW/m²/sr)². Assumes the Gaussian-window formalism above.
+    """
+    z_i = ch_i['z_peak']
+    z_j = ch_j['z_peak']
+    z_bar = 0.5 * (z_i + z_j)
+
+    overlap = _window_overlap(z_i, z_j)
+    # Numerically negligible: skip.
+    if overlap < 1e-4 / (2.0 * np.sqrt(np.pi) * SIGMA_Z_KERNEL):
+        return 0.0
+
+    # Geometry at z̄
+    chi_h = get_comoving_distance(z_bar)     # Mpc/h
+    if chi_h <= 0:
+        return 0.0
+    try:
+        from .cosmology import h as _h
+    except ImportError:
+        from cosmology import h as _h
+    H_h = get_hubble(z_bar) * _h              # km/s/(Mpc/h)
+    k_limber = max((ell + 0.5) / chi_h, 1e-4)  # h/Mpc
+    P_m = get_power_spectrum(k_limber, z_bar)  # (Mpc/h)³
+
+    # Bias-weighted intensities at z̄. B_scale, I_scale are nuisance params.
+    b_i = ch_i['b_scale'] * ch_i['b1_of_z'](z_bar)
+    b_j = ch_j['b_scale'] * ch_j['b1_of_z'](z_bar)
+    I_i = ch_i['I_scale'] * _mean_intensity(ch_i['line'], z_bar)
+    I_j = ch_j['I_scale'] * _mean_intensity(ch_j['line'], z_bar)
+
+    # Scale-dependent bias contributions (local PNG).
+    if fNL != 0.0:
+        db_i = delta_b_local(k_limber, z_bar, fNL, b_i)
+        db_j = delta_b_local(k_limber, z_bar, fNL, b_j)
+        bI_i = (b_i + db_i) * I_i
+        bI_j = (b_j + db_j) * I_j
+    else:
+        bI_i = b_i * I_i
+        bI_j = b_j * I_j
+
+    geom = (H_h / C_LIGHT) / (chi_h ** 2)   # (Mpc/h)⁻¹
+    return bI_i * bI_j * geom * P_m * overlap
+
+
+def compute_lim_cl_bessel(ell, ch_i, ch_j, fNL=0.0, use_rsd=True,
+                          k_min=1e-4, k_max=0.3, n_k=48, n_z=25):
+    """
+    Full-Bessel intensity-space C_ℓ between two LIM channels.
+
+    Adds the intensity multipliers Ī_ν^i(z) and Ī_ν'^j(z) inside the transfer
+    functions and, if use_rsd=True, the Kaiser correction b → b + f(z).
+    """
+    # Support each channel on ±3σ_z of its Gaussian.
+    z_lo_i = max(1e-3, ch_i['z_peak'] - 3.0 * SIGMA_Z_KERNEL)
+    z_hi_i = ch_i['z_peak'] + 3.0 * SIGMA_Z_KERNEL
+    z_lo_j = max(1e-3, ch_j['z_peak'] - 3.0 * SIGMA_Z_KERNEL)
+    z_hi_j = ch_j['z_peak'] + 3.0 * SIGMA_Z_KERNEL
+
+    k_grid = np.logspace(np.log10(k_min), np.log10(k_max), n_k)
+
+    def _delta(ch, z_lo, z_hi):
+        z_grid = np.linspace(z_lo, z_hi, n_z)
+        chi_h = np.asarray([get_comoving_distance(z) for z in z_grid])
+        D = get_growth_factor(z_grid)
+        line = ch['line']
+        b1_arr = np.asarray([ch['b_scale'] * ch['b1_of_z'](z) for z in z_grid])
+        I_arr = np.asarray([ch['I_scale'] * _mean_intensity(line, z)
+                            for z in z_grid])
+        if use_rsd:
+            try:
+                from .cosmology import growth_rate as _growth_rate
+            except ImportError:
+                from cosmology import growth_rate as _growth_rate
+            b_eff = b1_arr + _growth_rate(z_grid)
+        else:
+            b_eff = b1_arr
+
+        # Normalised Gaussian window centered on the channel's z_peak.
+        z_peak = ch['z_peak']
+        W = (1.0 / (np.sqrt(2.0 * np.pi) * SIGMA_Z_KERNEL)) * \
+            np.exp(-(z_grid - z_peak) ** 2 / (2.0 * SIGMA_Z_KERNEL ** 2))
+
+        Delta = np.zeros_like(k_grid)
+        for ik, k in enumerate(k_grid):
+            db = np.asarray([delta_b_local(k, z, fNL, b1_arr[iz])
+                             for iz, z in enumerate(z_grid)])
+            j_l = spherical_jn(int(ell), k * chi_h)
+            integrand = W * (b_eff + db) * I_arr * D * j_l
+            Delta[ik] = np.trapezoid(integrand, z_grid)
+        return Delta
+
+    Delta_i = _delta(ch_i, z_lo_i, z_hi_i)
+    Delta_j = _delta(ch_j, z_lo_j, z_hi_j)
+
+    P0 = np.asarray([get_power_spectrum(k, z=0.0) for k in k_grid])
+    integrand = (k_grid ** 2) * P0 * Delta_i * Delta_j
+    return (2.0 / np.pi) * np.trapezoid(integrand, k_grid)
+
+
+def _lim_bessel_delta_all(ell, channels, fNL, use_rsd,
+                          k_min=1e-4, k_max=0.3, n_k=48, n_z=25):
+    """
+    Precompute Δ_ℓ(k) transfer functions for every channel at multipole ℓ.
+
+    Returns
+    -------
+    Delta : ndarray shape (N_ch, n_k)
+    k_grid : ndarray shape (n_k,)
+    P0 : ndarray shape (n_k,) — matter P(k, z=0) on the k-grid.
+    """
+    try:
+        from .cosmology import growth_rate as _growth_rate
+    except ImportError:
+        from cosmology import growth_rate as _growth_rate
+
+    k_grid = np.logspace(np.log10(k_min), np.log10(k_max), n_k)
+    P0 = np.asarray([get_power_spectrum(k, z=0.0) for k in k_grid])
+
+    Delta = np.zeros((len(channels), n_k))
+    for ich, ch in enumerate(channels):
+        z_lo = max(1e-3, ch['z_peak'] - 3.0 * SIGMA_Z_KERNEL)
+        z_hi = ch['z_peak'] + 3.0 * SIGMA_Z_KERNEL
+        z_grid = np.linspace(z_lo, z_hi, n_z)
+        chi_h = np.asarray([get_comoving_distance(z) for z in z_grid])
+        D = get_growth_factor(z_grid)
+        line = ch['line']
+        b1_arr = np.asarray([ch['b_scale'] * ch['b1_of_z'](z) for z in z_grid])
+        I_arr = np.asarray([ch['I_scale'] * _mean_intensity(line, z)
+                            for z in z_grid])
+        b_eff = b1_arr + _growth_rate(z_grid) if use_rsd else b1_arr
+        W = (1.0 / (np.sqrt(2.0 * np.pi) * SIGMA_Z_KERNEL)) * \
+            np.exp(-(z_grid - ch['z_peak']) ** 2 /
+                   (2.0 * SIGMA_Z_KERNEL ** 2))
+        # k-vectorised (using scalar loop for Δb since it has to be evaluated
+        # for each (k, z), but j_ℓ is cheap once k*χ is built).
+        for ik, k in enumerate(k_grid):
+            db = np.asarray([delta_b_local(k, z, fNL, b1_arr[iz])
+                             for iz, z in enumerate(z_grid)])
+            j_l = spherical_jn(int(ell), k * chi_h)
+            integrand = W * (b_eff + db) * I_arr * D * j_l
+            Delta[ich, ik] = np.trapezoid(integrand, z_grid)
+    return Delta, k_grid, P0
+
+
+def _lim_C_matrix_from_delta(Delta, k_grid, P0):
+    """C_ℓ^{νν'} = (2/π) ∫ k² dk P(k) Δ_ν(k) Δ_ν'(k) — vectorised."""
+    weight = (k_grid ** 2) * P0
+    # (N_ch, N_ch) matrix built as a Δ^T diag(w) Δ product with trapezoidal
+    # weights on the k integration.
+    dk = np.diff(k_grid)
+    # trapezoidal weights on k
+    w_trap = np.empty_like(k_grid)
+    w_trap[1:-1] = 0.5 * (dk[:-1] + dk[1:])
+    w_trap[0] = 0.5 * dk[0]
+    w_trap[-1] = 0.5 * dk[-1]
+    W = weight * w_trap
+    # Δ * √W element-wise so that (Δ*√W) @ (Δ*√W)^T gives the integral.
+    sw = np.sqrt(np.abs(W)) * np.sign(W)
+    DW = Delta * sw
+    return (2.0 / np.pi) * (DW @ DW.T)
+
+
+def compute_lim_cls_matrix(ell, channels, fNL=0.0, use_bessel_below_limber=True,
+                           use_rsd=True):
+    """
+    Assemble the N_ch × N_ch signal covariance C_ℓ (intensity units) at ℓ.
+
+    Uses a vectorised Bessel path for the whole matrix when ℓ is below at
+    least half the channels' ℓ_limber; otherwise it uses the per-pair Limber
+    path. This keeps the 92×92 assembly under a few seconds per ℓ.
+    """
+    n = len(channels)
+    ell_lim_arr = np.asarray([
+        compute_ell_limber(ch['lambda_rest'], ch['delta_lambda'], ch['z_peak'])
+        for ch in channels
+    ])
+    use_bessel = use_bessel_below_limber and (ell <= np.median(ell_lim_arr))
+
+    if use_bessel:
+        Delta, k_grid, P0 = _lim_bessel_delta_all(ell, channels, fNL, use_rsd)
+        return _lim_C_matrix_from_delta(Delta, k_grid, P0)
+
+    # Fast Limber matrix build: precompute per-channel intensities/geometry
+    # at z_peak, then use outer products with the Gaussian-window overlap.
+    z_peaks = np.asarray([ch['z_peak'] for ch in channels])
+    # Pairwise mean z for the geometric factor.
+    z_bar = 0.5 * (z_peaks[:, None] + z_peaks[None, :])
+    overlap = _window_overlap(z_peaks[:, None], z_peaks[None, :])
+    # Approximate geometry at each channel's own z_peak (cheap) and blend as
+    # geometric mean per pair to keep the outer-product structure.
+    chi_h_i = np.asarray([get_comoving_distance(z) for z in z_peaks])
+    try:
+        from .cosmology import h as _h
+    except ImportError:
+        from cosmology import h as _h
+    H_h_i = np.asarray([get_hubble(z) * _h for z in z_peaks])
+    b_i = np.asarray([ch['b_scale'] * ch['b1_of_z'](ch['z_peak'])
+                      for ch in channels])
+    I_i = np.asarray([ch['I_scale'] * _mean_intensity(ch['line'], ch['z_peak'])
+                      for ch in channels])
+    bI = b_i * I_i
+    if fNL != 0.0:
+        # Δb at (ν, ν') needs k = (ℓ+½)/χ evaluated on the pair — but the
+        # per-channel geometric mean is a good approximation for near-diagonal
+        # pairs where the overlap is non-negligible.
+        pass
+
+    # Geometry factor per pair, evaluated at √(χ_i χ_j) and √(H_i H_j).
+    chi_pair = np.sqrt(np.outer(chi_h_i, chi_h_i))
+    H_pair = np.sqrt(np.outer(H_h_i, H_h_i))
+    k_pair = (ell + 0.5) / chi_pair
+    k_pair = np.clip(k_pair, 1e-4, 10.0)
+    z_flat = z_bar.ravel()
+    k_flat = k_pair.ravel()
+    P_flat = np.asarray([get_power_spectrum(k, z=z)
+                         for k, z in zip(k_flat, z_flat)])
+    P = P_flat.reshape(z_bar.shape)
+    geom = (H_pair / C_LIGHT) / (chi_pair ** 2)
+
+    # Scale-dependent bias correction (local PNG).
+    if fNL != 0.0:
+        db_pair = np.zeros_like(P)
+        for i in range(n):
+            for j in range(n):
+                db_pair[i, j] = delta_b_local(k_pair[i, j], z_bar[i, j],
+                                              fNL, b_i[i])
+        # Symmetrise: Δb enters on both sides.
+        bI_pair_i = (b_i[:, None] + db_pair) * I_i[:, None]
+        bI_pair_j = (b_i[None, :] + db_pair.T) * I_i[None, :]
+        C = bI_pair_i * bI_pair_j * geom * P * overlap
+    else:
+        C = np.outer(bI, bI) * geom * P * overlap
+    return C
+
+
+def compute_lim_sigma_matrix(ell, channels, N_diag, fNL=0.0,
+                             use_bessel_below_limber=True, use_rsd=True):
+    """Return Σ_ℓ = C_ℓ(signal, intensity units) + diag(N_ℓ)."""
+    C = compute_lim_cls_matrix(ell, channels, fNL=fNL,
+                               use_bessel_below_limber=use_bessel_below_limber,
+                               use_rsd=use_rsd)
+    return C + np.diag(N_diag)
+
+
 if __name__ == "__main__":
     # Test comoving distance
     print("=" * 70)
