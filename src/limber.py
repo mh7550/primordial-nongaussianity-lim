@@ -910,20 +910,33 @@ def _lim_C_matrix_from_delta(Delta, k_grid, P0):
 
 
 def compute_lim_cls_matrix(ell, channels, fNL=0.0, use_bessel_below_limber=True,
-                           use_rsd=True):
+                           use_rsd=True, diagonal_only=False, ell_bessel_max=None):
     """
     Assemble the N_ch × N_ch signal covariance C_ℓ (intensity units) at ℓ.
 
     Uses a vectorised Bessel path for the whole matrix when ℓ is below at
     least half the channels' ℓ_limber; otherwise it uses the per-pair Limber
     path. This keeps the 92×92 assembly under a few seconds per ℓ.
+
+    Parameters
+    ----------
+    diagonal_only : bool
+        If True, zero all off-diagonal entries (i.e. no cross-power).
+        Corresponds to summing over the auto-C_ℓ of every channel with no
+        multi-tracer covariance cancellation.
+    ell_bessel_max : int or None
+        If provided, use Bessel only for ℓ ≤ ell_bessel_max (overrides the
+        default "below median ℓ_limber" rule).
     """
     n = len(channels)
     ell_lim_arr = np.asarray([
         compute_ell_limber(ch['lambda_rest'], ch['delta_lambda'], ch['z_peak'])
         for ch in channels
     ])
-    use_bessel = use_bessel_below_limber and (ell <= np.median(ell_lim_arr))
+    if ell_bessel_max is not None:
+        use_bessel = use_bessel_below_limber and (ell <= ell_bessel_max)
+    else:
+        use_bessel = use_bessel_below_limber and (ell <= np.median(ell_lim_arr))
 
     if use_bessel:
         Delta, k_grid, P0 = _lim_bessel_delta_all(ell, channels, fNL, use_rsd)
