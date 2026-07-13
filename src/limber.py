@@ -734,14 +734,28 @@ def clear_intensity_cache():
     _INTENSITY_CACHE.clear()
 
 
-SIGMA_Z_KERNEL = 0.12  # Cheng+2024 / paper text
+SIGMA_Z_KERNEL = 0.12  # Cheng+2024 / paper text — the default, used if a
+                       # channel dict does not carry its own 'sigma_z' field.
+
+
+def _sigma_z(ch):
+    return ch.get('sigma_z', SIGMA_Z_KERNEL)
 
 
 def _window_overlap(z_nu, z_nup, sigma_z=SIGMA_Z_KERNEL):
-    """∫ W_ν(z) W_ν'(z) dz for two normalised Gaussians of width σ_z."""
+    """∫ W_ν(z) W_ν'(z) dz for two normalised Gaussians of width σ_z.
+
+    For a mixed pair with different widths σ_i, σ_j the correct formula is
+    (1/√(2π(σ_i²+σ_j²))) exp(−Δz²/(2(σ_i²+σ_j²))).
+    """
     dz = z_nu - z_nup
-    return (1.0 / (2.0 * np.sqrt(np.pi) * sigma_z)) * \
-           np.exp(-(dz ** 2) / (4.0 * sigma_z ** 2))
+    if np.isscalar(sigma_z):
+        return (1.0 / (2.0 * np.sqrt(np.pi) * sigma_z)) * \
+               np.exp(-(dz ** 2) / (4.0 * sigma_z ** 2))
+    # Pair form (sigma_z is (sigma_i, sigma_j))
+    si, sj = sigma_z
+    s2 = si * si + sj * sj
+    return (1.0 / np.sqrt(2.0 * np.pi * s2)) * np.exp(-(dz ** 2) / (2.0 * s2))
 
 
 def compute_lim_cl_limber(ell, ch_i, ch_j, fNL=0.0):
@@ -754,9 +768,10 @@ def compute_lim_cl_limber(ell, ch_i, ch_j, fNL=0.0):
     z_j = ch_j['z_peak']
     z_bar = 0.5 * (z_i + z_j)
 
-    overlap = _window_overlap(z_i, z_j)
+    sig_i, sig_j = _sigma_z(ch_i), _sigma_z(ch_j)
+    overlap = _window_overlap(z_i, z_j, sigma_z=(sig_i, sig_j))
     # Numerically negligible: skip.
-    if overlap < 1e-4 / (2.0 * np.sqrt(np.pi) * SIGMA_Z_KERNEL):
+    if overlap < 1e-4 / (2.0 * np.sqrt(np.pi) * min(sig_i, sig_j)):
         return 0.0
 
     # Geometry at z̄
@@ -799,11 +814,12 @@ def compute_lim_cl_bessel(ell, ch_i, ch_j, fNL=0.0, use_rsd=True,
     Adds the intensity multipliers Ī_ν^i(z) and Ī_ν'^j(z) inside the transfer
     functions and, if use_rsd=True, the Kaiser correction b → b + f(z).
     """
-    # Support each channel on ±3σ_z of its Gaussian.
-    z_lo_i = max(1e-3, ch_i['z_peak'] - 3.0 * SIGMA_Z_KERNEL)
-    z_hi_i = ch_i['z_peak'] + 3.0 * SIGMA_Z_KERNEL
-    z_lo_j = max(1e-3, ch_j['z_peak'] - 3.0 * SIGMA_Z_KERNEL)
-    z_hi_j = ch_j['z_peak'] + 3.0 * SIGMA_Z_KERNEL
+    # Support each channel on ±3σ_z of its own Gaussian.
+    sig_i, sig_j = _sigma_z(ch_i), _sigma_z(ch_j)
+    z_lo_i = max(1e-3, ch_i['z_peak'] - 3.0 * sig_i)
+    z_hi_i = ch_i['z_peak'] + 3.0 * sig_i
+    z_lo_j = max(1e-3, ch_j['z_peak'] - 3.0 * sig_j)
+    z_hi_j = ch_j['z_peak'] + 3.0 * sig_j
 
     k_grid = np.logspace(np.log10(k_min), np.log10(k_max), n_k)
 
@@ -826,8 +842,9 @@ def compute_lim_cl_bessel(ell, ch_i, ch_j, fNL=0.0, use_rsd=True,
 
         # Normalised Gaussian window centered on the channel's z_peak.
         z_peak = ch['z_peak']
-        W = (1.0 / (np.sqrt(2.0 * np.pi) * SIGMA_Z_KERNEL)) * \
-            np.exp(-(z_grid - z_peak) ** 2 / (2.0 * SIGMA_Z_KERNEL ** 2))
+        sig = _sigma_z(ch)
+        W = (1.0 / (np.sqrt(2.0 * np.pi) * sig)) * \
+            np.exp(-(z_grid - z_peak) ** 2 / (2.0 * sig ** 2))
 
         Delta = np.zeros_like(k_grid)
         for ik, k in enumerate(k_grid):
@@ -867,8 +884,9 @@ def _lim_bessel_delta_all(ell, channels, fNL, use_rsd,
 
     Delta = np.zeros((len(channels), n_k))
     for ich, ch in enumerate(channels):
-        z_lo = max(1e-3, ch['z_peak'] - 3.0 * SIGMA_Z_KERNEL)
-        z_hi = ch['z_peak'] + 3.0 * SIGMA_Z_KERNEL
+        sig = _sigma_z(ch)
+        z_lo = max(1e-3, ch['z_peak'] - 3.0 * sig)
+        z_hi = ch['z_peak'] + 3.0 * sig
         z_grid = np.linspace(z_lo, z_hi, n_z)
         chi_h = np.asarray([get_comoving_distance(z) for z in z_grid])
         D = get_growth_factor(z_grid)
@@ -877,9 +895,9 @@ def _lim_bessel_delta_all(ell, channels, fNL, use_rsd,
         I_arr = np.asarray([ch['I_scale'] * _mean_intensity(line, z)
                             for z in z_grid])
         b_eff = b1_arr + _growth_rate(z_grid) if use_rsd else b1_arr
-        W = (1.0 / (np.sqrt(2.0 * np.pi) * SIGMA_Z_KERNEL)) * \
+        W = (1.0 / (np.sqrt(2.0 * np.pi) * sig)) * \
             np.exp(-(z_grid - ch['z_peak']) ** 2 /
-                   (2.0 * SIGMA_Z_KERNEL ** 2))
+                   (2.0 * sig ** 2))
         # k-vectorised (using scalar loop for Δb since it has to be evaluated
         # for each (k, z), but j_ℓ is cheap once k*χ is built).
         for ik, k in enumerate(k_grid):
@@ -945,9 +963,13 @@ def compute_lim_cls_matrix(ell, channels, fNL=0.0, use_bessel_below_limber=True,
     # Fast Limber matrix build: precompute per-channel intensities/geometry
     # at z_peak, then use outer products with the Gaussian-window overlap.
     z_peaks = np.asarray([ch['z_peak'] for ch in channels])
+    sig_arr = np.asarray([_sigma_z(ch) for ch in channels])
     # Pairwise mean z for the geometric factor.
     z_bar = 0.5 * (z_peaks[:, None] + z_peaks[None, :])
-    overlap = _window_overlap(z_peaks[:, None], z_peaks[None, :])
+    # Pairwise overlap using per-channel σ_z: (1/√(2π(σ_i²+σ_j²))) exp(...)
+    s2_pair = (sig_arr[:, None] ** 2 + sig_arr[None, :] ** 2)
+    dz2 = (z_peaks[:, None] - z_peaks[None, :]) ** 2
+    overlap = (1.0 / np.sqrt(2.0 * np.pi * s2_pair)) * np.exp(-dz2 / (2.0 * s2_pair))
     # Approximate geometry at each channel's own z_peak (cheap) and blend as
     # geometric mean per pair to keep the outer-product structure.
     chi_h_i = np.asarray([get_comoving_distance(z) for z in z_peaks])
