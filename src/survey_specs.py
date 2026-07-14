@@ -446,6 +446,102 @@ def get_shot_noise_angular(sample, z_bin_idx, z_mid, comoving_distance):
     return N_ell
 
 
+# ============================================================================
+# Euclid Photometric Galaxy Survey (Blanchard+2020 / Euclid IST fiducial)
+# ============================================================================
+# Blanchard et al. A&A 642, A191 (2020) — Euclid IST forecasting paper.
+# Numbers cross-checked against Euclid Definition Study Report (Laureijs+2011).
+#
+# Photometric sample:
+#   n_gal = 30 gal/arcmin²  (Euclid Wide photo, weak-lensing quality cuts
+#                            give slightly less; 30 is the target)
+#   z ∈ [0, 2] for f_NL use  (photo-z reliable to z ~ 2)
+#   Δz = 0.2 tomographic bins  → 10 bins
+#   σ_z/(1+z) = 0.05  (Euclid photo requirement)
+#   b_g(z) = √(1+z)   (fiducial from Euclid IST)
+#
+# Two configurations:
+#   Euclid Deep Field:  50 deg²   overlapping SPHEREx deep     → f_sky ≈ 0.0012
+#   Euclid Wide:       14 500 deg² overlapping SPHEREx all-sky → f_sky ≈ 0.35
+# ============================================================================
+
+EUCLID_N_ARCMIN2 = 30.0                    # gal/arcmin²
+_ARCMIN2_TO_SR = (np.pi / 180.0 / 60.0) ** 2
+EUCLID_N_STER = EUCLID_N_ARCMIN2 / _ARCMIN2_TO_SR   # gal/sr, ≈ 3.55e8
+
+EUCLID_Z_EDGES = np.linspace(0.0, 2.0, 11)          # 10 bins, edges 0.0…2.0
+EUCLID_Z_BINS = list(zip(EUCLID_Z_EDGES[:-1], EUCLID_Z_EDGES[1:]))
+EUCLID_N_ZBINS = len(EUCLID_Z_BINS)
+
+EUCLID_PHOTOZ_ERR = 0.05                    # σ_z/(1+z)
+# Sky fractions
+EUCLID_F_SKY_DEEP = 50.0 / 41253.0          # ≈ 0.00121
+EUCLID_F_SKY_WIDE = 14500.0 / 41253.0       # ≈ 0.35148
+
+
+def euclid_bias(z):
+    """Fiducial linear galaxy bias for Euclid photo sample."""
+    return np.sqrt(1.0 + z)
+
+
+def euclid_photoz_sigma(z):
+    """Photo-z 1σ error at redshift z."""
+    return EUCLID_PHOTOZ_ERR * (1.0 + z)
+
+
+def _bin_effective_sigma(z_lo, z_hi):
+    """Combined bin-width + photo-z σ_z at bin centre (Gaussian approximation)."""
+    z_c = 0.5 * (z_lo + z_hi)
+    sigma_tophat = (z_hi - z_lo) / np.sqrt(12.0)
+    sigma_photoz = euclid_photoz_sigma(z_c)
+    return np.sqrt(sigma_tophat ** 2 + sigma_photoz ** 2)
+
+
+def build_euclid_bins(config='wide'):
+    """
+    Return a list of 10 Euclid photometric tomographic bins with the fields
+    needed by the joint-Fisher machinery.
+
+    Each bin dict carries:
+        'kind'      : 'gal'  (marker for the joint assembler)
+        'z_peak'    : bin centre
+        'z_edges'   : (z_lo, z_hi)
+        'sigma_z'   : effective Gaussian σ_z (photo-z ⊕ top-hat)
+        'b_g(z)'    : callable galaxy bias (fiducial √(1+z))
+        'n_bar'     : angular number density (gal / sr) in this bin
+        'noise'     : 1 / n_bar  (angular shot noise)
+        'b_scale'   : nuisance scaling (fiducial 1.0)
+        'I_scale'   : galaxy has no intensity — reserved for joint bookkeeping
+
+    Number density per bin is total / N_bins (uniform-in-z approximation).
+    """
+    if config == 'deep':
+        f_sky = EUCLID_F_SKY_DEEP
+    elif config == 'wide':
+        f_sky = EUCLID_F_SKY_WIDE
+    else:
+        raise ValueError(f"config must be 'deep' or 'wide', got '{config}'")
+
+    n_per_bin_sr = EUCLID_N_STER / EUCLID_N_ZBINS      # gal/sr per bin
+    bins = []
+    for z_lo, z_hi in EUCLID_Z_BINS:
+        z_c = 0.5 * (z_lo + z_hi)
+        sig = _bin_effective_sigma(z_lo, z_hi)
+        bins.append(dict(
+            kind='gal',
+            z_peak=float(z_c),
+            z_edges=(float(z_lo), float(z_hi)),
+            sigma_z=float(sig),
+            b_g_of_z=(lambda z, _zc=z_c: euclid_bias(z)),
+            n_bar=float(n_per_bin_sr),
+            noise=float(1.0 / n_per_bin_sr),
+            b_scale=1.0,
+            I_scale=1.0,   # unused for galaxies; kept so joint code is uniform
+            f_sky_config=f_sky,
+        ))
+    return bins, f_sky
+
+
 def get_survey_info():
     """
     Return dictionary with SPHEREx survey information.

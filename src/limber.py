@@ -1026,6 +1026,146 @@ def compute_lim_sigma_matrix(ell, channels, N_diag, fNL=0.0,
     return C + np.diag(N_diag)
 
 
+# ---------------------------------------------------------------------------
+# Joint LIM × galaxy machinery  (Pullen joint forecast)
+# ---------------------------------------------------------------------------
+# Galaxy-photo auto  C_ℓ^{ab}     — dimensionless
+# Cross LIM × gal    C_ℓ^{ν,a}    — nW/m²/sr  (intensity × density)
+# LIM auto           C_ℓ^{νν'}    — (nW/m²/sr)²   (already implemented)
+#
+# All three are computed in the Limber approximation with the Gaussian
+# window formalism, sharing P_m(k, z) and delta_b_local for the PNG term.
+# Units convention verified in the diagnostic runner.
+# ---------------------------------------------------------------------------
+
+def _geom_factor(z_bar):
+    """Return (H_h/c) / χ_h² at z̄ — the Limber geometric weight."""
+    chi_h = get_comoving_distance(z_bar)
+    if chi_h <= 0:
+        return 0.0, 0.0
+    try:
+        from .cosmology import h as _h
+    except ImportError:
+        from cosmology import h as _h
+    H_h = get_hubble(z_bar) * _h
+    return (H_h / C_LIGHT) / (chi_h ** 2), chi_h
+
+
+def _pair_overlap(z_i, z_j, sig_i, sig_j):
+    """∫W_i W_j dz for two normalised Gaussians of widths σ_i, σ_j."""
+    s2 = sig_i * sig_i + sig_j * sig_j
+    return (1.0 / np.sqrt(2.0 * np.pi * s2)) * \
+           np.exp(-((z_i - z_j) ** 2) / (2.0 * s2))
+
+
+def compute_gal_cl_limber(ell, bin_i, bin_j, fNL=0.0):
+    """
+    Limber-approximated galaxy-photo cross-C_ℓ between two z-bins.
+    Dimensionless.
+    """
+    z_i, z_j = bin_i['z_peak'], bin_j['z_peak']
+    z_bar = 0.5 * (z_i + z_j)
+    sig_i, sig_j = bin_i['sigma_z'], bin_j['sigma_z']
+    overlap = _pair_overlap(z_i, z_j, sig_i, sig_j)
+    if overlap < 1e-6:
+        return 0.0
+    geom, chi_h = _geom_factor(z_bar)
+    if geom == 0:
+        return 0.0
+    k = max((ell + 0.5) / chi_h, 1e-4)
+    P_m = get_power_spectrum(k, z_bar)
+    b_i = bin_i['b_scale'] * bin_i['b_g_of_z'](z_bar)
+    b_j = bin_j['b_scale'] * bin_j['b_g_of_z'](z_bar)
+    if fNL != 0.0:
+        b_i = b_i + delta_b_local(k, z_bar, fNL, b_i)
+        b_j = b_j + delta_b_local(k, z_bar, fNL, b_j)
+    return b_i * b_j * geom * P_m * overlap
+
+
+def compute_lim_x_galaxy_cross_cl(ell, lim_ch, gal_bin, fNL=0.0):
+    """
+    Cross-C_ℓ between a SPHEREx LIM channel and a Euclid photo z-bin,
+    in units nW/m²/sr (intensity × dimensionless-density).
+
+    Limber projection:
+      C_ℓ^{ν,a} = [b_i(z̄) Ī_ν^i(z̄)] × [b_g^a(z̄)]
+                  × (H_h/c) / χ_h² × P_m(k, z̄) × ∫W_ν W_a dz
+    """
+    z_i = lim_ch['z_peak']
+    z_a = gal_bin['z_peak']
+    z_bar = 0.5 * (z_i + z_a)
+    sig_i = _sigma_z(lim_ch)
+    sig_a = gal_bin['sigma_z']
+    overlap = _pair_overlap(z_i, z_a, sig_i, sig_a)
+    if overlap < 1e-6:
+        return 0.0
+    geom, chi_h = _geom_factor(z_bar)
+    if geom == 0:
+        return 0.0
+    k = max((ell + 0.5) / chi_h, 1e-4)
+    P_m = get_power_spectrum(k, z_bar)
+    line = lim_ch['line']
+    b_lim = lim_ch['b_scale'] * lim_ch['b1_of_z'](z_bar)
+    I_lim = lim_ch['I_scale'] * _mean_intensity(line, z_bar)
+    b_gal = gal_bin['b_scale'] * gal_bin['b_g_of_z'](z_bar)
+    if fNL != 0.0:
+        b_lim = b_lim + delta_b_local(k, z_bar, fNL, b_lim)
+        b_gal = b_gal + delta_b_local(k, z_bar, fNL, b_gal)
+    return (b_lim * I_lim) * b_gal * geom * P_m * overlap
+
+
+def compute_joint_cls_matrix(ell, lim_channels, gal_bins, fNL=0.0):
+    """
+    Assemble the joint (N_lim + N_gal) × (N_lim + N_gal) signal covariance
+    at multipole ℓ. Limber path only (no Bessel).
+
+    Layout:
+        [ 0 : N_lim ]                       LIM channels
+        [ N_lim : N_lim + N_gal ]           galaxy bins
+
+    Units: mixed — LIM block in (nW/m²/sr)², galaxy block dimensionless,
+    cross block in nW/m²/sr. This is fine for the Fisher trace, which
+    only uses ratios ∂Σ/Σ.
+    """
+    Nl = len(lim_channels)
+    Ng = len(gal_bins)
+    N = Nl + Ng
+    C = np.zeros((N, N))
+
+    # LIM–LIM block: fast Limber path from the existing routine.
+    C_ll = compute_lim_cls_matrix(ell, lim_channels, fNL=fNL,
+                                  use_bessel_below_limber=False,
+                                  use_rsd=False)
+    C[:Nl, :Nl] = C_ll
+
+    # gal–gal block
+    for i in range(Ng):
+        for j in range(i, Ng):
+            v = compute_gal_cl_limber(ell, gal_bins[i], gal_bins[j], fNL=fNL)
+            C[Nl + i, Nl + j] = v
+            C[Nl + j, Nl + i] = v
+
+    # LIM–gal cross block
+    for i in range(Nl):
+        for j in range(Ng):
+            v = compute_lim_x_galaxy_cross_cl(ell, lim_channels[i],
+                                              gal_bins[j], fNL=fNL)
+            C[i, Nl + j] = v
+            C[Nl + j, i] = v
+
+    return C
+
+
+def compute_joint_sigma_matrix(ell, lim_channels, gal_bins,
+                               N_lim_diag, N_gal_diag, fNL=0.0):
+    """Σ_ℓ = C_joint(signal) + diag([N_lim, N_gal])."""
+    C = compute_joint_cls_matrix(ell, lim_channels, gal_bins, fNL=fNL)
+    Nl = len(lim_channels)
+    Ng = len(gal_bins)
+    N_diag = np.concatenate([N_lim_diag, N_gal_diag])
+    return C + np.diag(N_diag)
+
+
 if __name__ == "__main__":
     # Test comoving distance
     print("=" * 70)
