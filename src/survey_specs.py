@@ -542,6 +542,99 @@ def build_euclid_bins(config='wide'):
     return bins, f_sky
 
 
+# ============================================================================
+# Euclid Spectroscopic sample — Hα NISP-S (real, present-day)
+# ============================================================================
+# Real Euclid Hα spectroscopic: n ≈ 1900 gal/deg² over z ∈ [0.9, 1.8],
+# σ_z/(1+z) ~ 0.001 (effectively delta-function relative to the LIM
+# σ_z = 0.12 window).  Bias b_g(z) ≈ 0.79 (1+z) from the Euclid IST
+# Hα fiducial (Blanchard+2020 Sec. 4.2).
+# ============================================================================
+
+EUCLID_SPEC_HA_N_ARCMIN2 = 1900.0 / 3600.0        # gal/arcmin² ≈ 0.53
+EUCLID_SPEC_HA_N_STER = EUCLID_SPEC_HA_N_ARCMIN2 / _ARCMIN2_TO_SR
+EUCLID_SPEC_HA_Z_LO, EUCLID_SPEC_HA_Z_HI = 0.9, 1.8
+
+
+def euclid_spec_bias(z):
+    """Fiducial linear galaxy bias for Euclid Hα spec (b(z) = 0.79 (1+z))."""
+    return 0.79 * (1.0 + z)
+
+
+def build_euclid_spec_bins(config='wide', n_bins=5,
+                           z_lo=EUCLID_SPEC_HA_Z_LO,
+                           z_hi=EUCLID_SPEC_HA_Z_HI,
+                           n_ster_total=EUCLID_SPEC_HA_N_STER,
+                           bias_fn=euclid_spec_bias,
+                           sigma_z_over_1plusz=1e-3):
+    """
+    Return a list of tomographic bins for a spectroscopic-quality sample.
+
+    Differences vs the photometric builder:
+      * σ_z is spec-quality (~1e-3(1+z)) rather than 0.05(1+z), so the
+        effective bin σ is dominated by the top-hat bin width.
+      * No outlier tail broadening.
+      * Distribution is uniform in z between z_lo and z_hi (simplest
+        assumption; real Hα n(z) drops toward z=1.8 but the aggregate
+        Fisher is dominated by number density, not shape).
+
+    Parameters
+    ----------
+    n_bins : int
+        Number of tomographic bins between z_lo and z_hi.
+    n_ster_total : float
+        Total galaxy density (gal/sr) across the sample; each bin gets
+        n_ster_total / n_bins galaxies.
+    bias_fn : callable
+        b_g(z) fiducial. Defaults to Euclid Hα spec: 0.79(1+z).
+    """
+    if config == 'deep':
+        f_sky = EUCLID_F_SKY_DEEP
+    else:
+        f_sky = EUCLID_F_SKY_WIDE
+
+    edges = np.linspace(z_lo, z_hi, n_bins + 1)
+    z_bins = list(zip(edges[:-1], edges[1:]))
+    n_per_bin_sr = n_ster_total / n_bins
+
+    bins = []
+    for zl, zh in z_bins:
+        z_c = 0.5 * (zl + zh)
+        sigma_tophat = (zh - zl) / np.sqrt(12.0)
+        sigma_specz = sigma_z_over_1plusz * (1.0 + z_c)
+        sigma_eff = float(np.sqrt(sigma_tophat ** 2 + sigma_specz ** 2))
+        bins.append(dict(
+            kind='gal',
+            z_peak=float(z_c),
+            z_edges=(float(zl), float(zh)),
+            sigma_z=sigma_eff,
+            b_g_of_z=(lambda z, _f=bias_fn: _f(z)),
+            n_bar=float(n_per_bin_sr),
+            noise=float(1.0 / n_per_bin_sr),
+            b_scale=1.0,
+            I_scale=1.0,
+            f_sky_config=f_sky,
+        ))
+    return bins, f_sky
+
+
+def build_euclid_hypothetical_spec_bins(config='wide', n_bins=50,
+                                        z_lo=0.0, z_hi=2.0):
+    """
+    Hypothetical spectroscopic sample: photo-density number count with
+    spec-quality redshifts, split into many narrow tomographic bins.
+
+    Used to isolate the effect of redshift resolution alone, holding total
+    number density fixed at the Euclid photo value.
+    """
+    return build_euclid_spec_bins(
+        config=config, n_bins=n_bins, z_lo=z_lo, z_hi=z_hi,
+        n_ster_total=EUCLID_N_STER,     # photo density
+        bias_fn=euclid_bias,            # photo fiducial b = √(1+z)
+        sigma_z_over_1plusz=1e-3,
+    )
+
+
 def get_survey_info():
     """
     Return dictionary with SPHEREx survey information.
