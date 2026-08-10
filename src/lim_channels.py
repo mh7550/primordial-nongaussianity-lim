@@ -133,6 +133,108 @@ def line_peak_z(line):
     return 0.5 * (max(0.2, z_lo) + z_hi)
 
 
+# ---------------------------------------------------------------------------
+# R=100 (PRIMA/FIRESS-level) variant  — Pullen spectral-resolution test
+# ---------------------------------------------------------------------------
+# A hypothetical SPHEREx-scale mission with UNIFORM resolution R across the
+# 0.75–5.0 μm range, replacing SPHEREx's actual band-dependent R = 41 / 35 /
+# 130.  Each channel carries σ_z = (1+z)/R evaluated at its emission
+# redshift, and its noise is interpolated from the v28 curve.
+#
+# Two noise-scaling options:
+#   (a) direct interpolation of σ_n(λ) — assumes noise per unit bandwidth is
+#       resolution-independent (background-limited detector).  Correct for
+#       SPHEREx's zodi + read-noise regime.
+#   (b) σ_n scaled by √(R_new / R_native) per channel — assumes photon shot
+#       noise, so narrower bandpasses collect fewer photons.  Correct for a
+#       cold cryogenic spectrometer like PRIMA/FIRESS.
+#
+# Option (b) is more physically appropriate for a PRIMA/FIRESS-like mission
+# and is used for the headline result.  Option (a) is retained as a
+# best-case check.
+# ---------------------------------------------------------------------------
+
+def _native_R(lam_obs):
+    """SPHEREx native R at observed wavelength λ (μm)."""
+    if lam_obs < 2.42:
+        return 41.0   # bands 1-3
+    if lam_obs < 3.82:
+        return 35.0   # band 4
+    if lam_obs < 4.42:
+        return 110.0  # band 5
+    return 130.0      # band 6
+
+
+def build_uniform_R_channels(R=100.0, mode='deep',
+                             n_per_line=30, z_min=0.2, z_max=5.0,
+                             noise_scaling='b'):
+    """
+    Build LIM channels at uniform spectral resolution R across the four lines.
+
+    Each of the four lines is sampled at ``n_per_line`` log-uniform (in 1+z)
+    redshifts spanning its SPHEREx-accessible range, and each channel is
+    tagged with:
+        sigma_z = (1 + z_peak) / R    (Gaussian window width)
+        sigma_n = v28 σ_n(λ_obs) × noise_scale_factor
+
+    Parameters
+    ----------
+    R : float
+        Uniform spectral resolution λ/Δλ.
+    mode : {'deep', 'all-sky'}
+        v28 noise table to interpolate against.
+    n_per_line : int
+        Number of z samples per line.
+    z_min, z_max : float
+        Overall redshift range (further restricted per line by the 0.75–5.0
+        μm SPHEREx wavelength window).
+    noise_scaling : {'a', 'b'}
+        'a' : direct interpolation of v28 σ_n(λ_obs)  (background-limited).
+        'b' : σ_n × √(R / R_native(λ_obs))  (photon-limited; per-channel
+              noise increases for finer bandpasses).
+    """
+    lam_grid, sig_grid = load_v28_noise(mode=mode)
+    omega_pix = (6.2 * np.pi / 180.0 / 3600.0) ** 2
+
+    channels = []
+    for line in LINE_ORDER:
+        lam_rest = LINE_PROPERTIES[line]['lambda_rest']
+        z_lo = max(z_min, 0.75 / lam_rest - 1.0)
+        z_hi = min(z_max, 5.0 / lam_rest - 1.0)
+        if z_hi <= z_lo:
+            continue
+        # Log-uniform in (1+z) so that Δz per channel ∝ (1+z) matches R=const.
+        one_plus_z = np.logspace(np.log10(1.0 + z_lo),
+                                 np.log10(1.0 + z_hi),
+                                 n_per_line)
+        z_peaks = one_plus_z - 1.0
+        for zp in z_peaks:
+            lam_obs = lam_rest * (1.0 + zp)
+            dl = lam_obs / R                                 # μm
+            sigma_z_channel = (1.0 + zp) / R                  # Gaussian width
+            sig_v28 = float(np.interp(lam_obs, lam_grid, sig_grid))
+            if noise_scaling == 'b':
+                sig_c = sig_v28 * np.sqrt(R / _native_R(lam_obs))
+            else:
+                sig_c = sig_v28
+            N_ell = sig_c ** 2 * omega_pix
+            channels.append(dict(
+                line=line,
+                lambda_rest=lam_rest,
+                lambda_obs=float(lam_obs),
+                delta_lambda=float(dl),
+                z_peak=float(zp),
+                sigma_z=float(sigma_z_channel),
+                sigma_n=sig_c,
+                noise=float(N_ell),
+                active=True,
+                b1_of_z=_b1_of_z(line),
+                I_scale=1.0,
+                b_scale=1.0,
+            ))
+    return channels
+
+
 if __name__ == "__main__":
     channels = build_92_channels()
     print(f"Built {len(channels)} channels")
